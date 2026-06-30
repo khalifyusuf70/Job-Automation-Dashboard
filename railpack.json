@@ -2,7 +2,7 @@
   "$schema": "https://schema.railpack.com",
   "provider": "python",
   "packages": {
-    "python": "3.11.9"
+    "python": "3.11"
   },
   "steps": {
     "install": {
