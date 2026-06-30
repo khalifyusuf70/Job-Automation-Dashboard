@@ -1,0 +1,95 @@
+{
+  "name": "Khalif Yusuf Mohamed",
+  "title": "Chief of Staff / Senior Advisor",
+  "email": "cos.presidency@jubalandstate.so",
+  "phone": "+252611385559 / +254715244144",
+  "location": "Somalia/Kenya",
+  "professional_summary": "Highly efficient professional with over 10 years of experience leading cross-functional teams, delivering complex projects, and driving organizational transformation across diverse sectors from government, private, and non-governmental organizations. Proven ability to align program objectives with organizational goals, manage multimillion-dollar budgets, and ensure successful delivery through robust risk management and stakeholder engagement.",
+  "skills": [
+    "Project Management",
+    "Strategic Planning",
+    "Decision Making",
+    "Problem Solving",
+    "Creative Design",
+    "Innovation",
+    "Service-Focused",
+    "PowerPoint",
+    "Advanced Excel",
+    "Python",
+    "Tableau",
+    "Power BI",
+    "SPSS",
+    "Grant Development",
+    "MEAL Systems",
+    "Data Analysis",
+    "Risk Management",
+    "Stakeholder Engagement",
+    "Budget Management",
+    "Performance Management",
+    "KPI Monitoring"
+  ],
+  "experience": [
+    {
+      "title": "Chief of Staff",
+      "company": "Jubaland State of Somalia",
+      "location": "Somalia",
+      "duration": "Feb 2023 - May 2026",
+      "description": "Led strategic planning and execution across the state government, ensuring alignment with the President's priorities while coordinating ministers, agency heads, and executive offices. Streamlined operations by implementing process improvements and governance systems that enhanced organizational efficiency. Strengthened collaboration with internal and external stakeholders, ensuring effective executive communication and informed decision-making. Supported the development and implementation of state policies by working closely with senior leadership to advance the President's agenda. Coordinated cabinet meetings, managed the Office of the President's daily operations, and oversaw executive communications and high-priority strategic initiatives.",
+      "achievements": [
+        "Enhanced organizational efficiency through process improvements",
+        "Strengthened stakeholder collaboration",
+        "Coordinated high-priority strategic initiatives"
+      ]
+    },
+    {
+      "title": "Senior Advisor",
+      "company": "Projects Planning and Grants development, Ministry of Planning - Jubaland State",
+      "location": "Somalia",
+      "duration": "Aug 2021 - Jan 2023",
+      "description": "Secured funding through grant identification, proposal development, and donor engagement. Managed project planning, implementation, budgeting, and risk management. Strengthened donor reporting and compliance through MEAL systems. Analyzed data to generate evidence-based insights and inform strategic decisions. Produced donor-focused reports and communication materials highlighting program impact.",
+      "achievements": [
+        "Secured funding through grants",
+        "Improved donor reporting and compliance",
+        "Generated evidence-based insights"
+      ]
+    },
+    {
+      "title": "Chief Operations Officer",
+      "company": "KIMS MICROFINANCE",
+      "location": "Somalia/Kenya",
+      "duration": "July 2016 - 2021",
+      "description": "Led business planning, budgeting, and strategic growth initiatives with the Managing Director. Developed and executed business strategies to drive operational performance and organizational growth. Oversaw company operations, improving productivity, efficiency, and organizational culture. Led performance management through data-driven decision-making and KPI monitoring. Directed talent acquisition, workforce development, and employee performance programs.",
+      "achievements": [
+        "Drove operational performance and growth",
+        "Improved productivity and efficiency",
+        "Directed talent acquisition and performance programs"
+      ]
+    }
+  ],
+  "education": {
+    "degree": "Micro Masters. Database Management System",
+    "university": "University of Baltimore Maryland",
+    "year": "",
+    "honors": ""
+  },
+  "education2": {
+    "degree": "Degree Actuarial Science and Statistics",
+    "university": "JOMO KENYATTA UNIVERSITY, Nairobi, Kenya",
+    "year": "",
+    "honors": ""
+  },
+  "certifications": [],
+  "languages": ["English", "Somali"],
+  "preferences": {
+    "work_types": ["Remote", "On-site"],
+    "locations": ["Kenya", "Somalia", "Remote"],
+    "salary_min": 0,
+    "salary_currency": "USD",
+    "relocation": true,
+    "visa_sponsorship": false
+  },
+  "links": {
+    "linkedin": "",
+    "github": ""
+  }
+}
