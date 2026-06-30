@@ -3,16 +3,5 @@
   "provider": "python",
   "packages": {
     "python": "3.11"
-  },
-  "steps": {
-    "install": {
-      "commands": [
-        "pip install --upgrade pip",
-        "pip install -r requirements.txt"
-      ]
-    }
-  },
-  "deploy": {
-    "startCommand": "gunicorn app:app --bind 0.0.0.0:${PORT:-8000} --workers 4"
   }
 }
