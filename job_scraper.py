@@ -60,10 +60,11 @@ class LinkedInScraper:
             if remaining_daily <= 0:
                 return []
                 
-            # Use "a" to get ALL jobs
-            broad_keyword = "a"  # This gets everything
+            # Use "and" - common enough to catch ALL jobs, specific enough to work
+            # "and" appears in almost every job description
+            broad_keyword = "and"
                 
-            items_to_fetch = min(100, remaining_daily)
+            items_to_fetch = min(50, remaining_daily)  # Reduced to 50 per location
             
             payload = {
                 'keyword': [broad_keyword],
@@ -95,34 +96,38 @@ class LinkedInScraper:
             run_id = run_data['data']['id']
             logger.info(f"Started run {run_id} for {location}")
 
-            # STEP 2: Wait for completion with shorter timeout
-            max_wait = 30  # Maximum 30 seconds to avoid worker timeout
+            # STEP 2: Wait for completion with SHORTER timeout
+            max_wait = 25  # Maximum 25 seconds to avoid worker timeout
             waited = 0
             status = 'RUNNING'
+            last_status = ''
             
             while waited < max_wait and status in ['RUNNING', 'READY']:
                 status_url = f"https://api.apify.com/v2/actor-runs/{run_id}"
                 status_response = requests.get(
                     status_url,
                     params={'token': self.apify_token},
-                    timeout=15
+                    timeout=10
                 )
                 status_data = status_response.json()
                 status = status_data['data']['status']
-                logger.info(f"Run {run_id} status: {status}")
+                
+                if status != last_status:
+                    logger.info(f"Run {run_id} status: {status}")
+                    last_status = status
                 
                 if status in ['SUCCEEDED', 'FAILED', 'ABORTED']:
                     break
                     
-                time.sleep(3)  # Check every 3 seconds
-                waited += 3
+                time.sleep(2)  # Check every 2 seconds
+                waited += 2
 
-            # If still running after timeout, abort and return
+            # If still running after timeout, abort and return empty
             if status == 'RUNNING':
                 logger.warning(f"Run {run_id} still running after {max_wait}s - aborting")
                 try:
                     abort_url = f"https://api.apify.com/v2/actor-runs/{run_id}/abort"
-                    requests.post(abort_url, params={'token': self.apify_token}, timeout=10)
+                    requests.post(abort_url, params={'token': self.apify_token}, timeout=5)
                 except:
                     pass
                 return []
@@ -135,8 +140,8 @@ class LinkedInScraper:
             result_url = f"https://api.apify.com/v2/actor-runs/{run_id}/items"
             result_response = requests.get(
                 result_url,
-                params={'token': self.apify_token},
-                timeout=20
+                params={'token': self.apify_token, 'limit': items_to_fetch},
+                timeout=15
             )
             
             if result_response.status_code == 404:
