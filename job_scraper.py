@@ -13,34 +13,45 @@ class LinkedInScraper:
         self.apify_actor_id = 'number_one_scraper~cheap-advance-linkedin-jobs-scraper'
         self.api_url = f"https://api.apify.com/v2/acts/{self.apify_actor_id}/runs"
         self.locations = ['Kenya', 'Somalia']
-        self.max_daily_jobs = 300
+        self.max_daily_jobs = 300  # Daily limit to control costs
         
     def scrape_last_24_hours(self, keyword=None, location=None):
+        """
+        Main scraping method - respects daily limit across all locations
+        """
         all_jobs = []
         if location:
             return self._scrape_location('', location)
 
+        # Track total jobs fetched across ALL locations
+        total_fetched = 0
+        
         for loc in self.locations:
-            if len(all_jobs) >= self.max_daily_jobs:
-                logger.info(f"Reached daily limit of {self.max_daily_jobs} jobs")
+            # Check if we've hit the daily limit BEFORE scraping next location
+            if total_fetched >= self.max_daily_jobs:
+                logger.info(f"Reached daily limit of {self.max_daily_jobs} jobs - stopping further scraping")
                 break
                 
             try:
-                logger.info(f"Scraping ALL jobs in: {loc}")
-                jobs = self._scrape_location('', loc)
+                logger.info(f"Scraping jobs in: {loc}")
+                jobs = self._scrape_location('', loc, total_fetched)
                 
-                remaining = self.max_daily_jobs - len(all_jobs)
+                # Only take what we need to reach the daily limit
+                remaining = self.max_daily_jobs - total_fetched
                 if len(jobs) > remaining:
                     jobs = jobs[:remaining]
+                    logger.info(f"Capped jobs from {loc} to {remaining} to stay under daily limit")
                     
+                total_fetched += len(jobs)
                 all_jobs.extend(jobs)
-                logger.info(f"Found {len(jobs)} jobs in {loc} (total so far: {len(all_jobs)})")
-                time.sleep(2)
+                logger.info(f"Found {len(jobs)} jobs in {loc} (total so far: {total_fetched}/{self.max_daily_jobs})")
+                time.sleep(2)  # Small delay between locations
+                
             except Exception as e:
                 logger.error(f"Error scraping {loc}: {e}")
                 continue
 
-        # Deduplicate by URL
+        # Deduplicate by URL (in case same job appears in multiple searches)
         seen_urls = set()
         unique_jobs = []
         for job in all_jobs:
@@ -48,21 +59,36 @@ class LinkedInScraper:
                 seen_urls.add(job['url'])
                 unique_jobs.append(job)
 
-        # Filter out ONLY entry-level
+        # Filter out ONLY entry-level jobs
         filtered = self._filter_entry_level_only(unique_jobs)
-        logger.info(f"Total scraped: {len(all_jobs)}, After dedupe: {len(unique_jobs)}, After filtering: {len(filtered)}")
+        
+        logger.info(f"SUMMARY - Total scraped: {len(all_jobs)}, After dedupe: {len(unique_jobs)}, After filtering: {len(filtered)}")
+        logger.info(f"Daily limit enforced: {self.max_daily_jobs} jobs maximum")
         return filtered
 
-    def _scrape_location(self, keyword, location):
+    def _scrape_location(self, keyword, location, current_total=0):
+        """
+        Scrape a single location with the given keyword
+        current_total is used to calculate remaining daily limit
+        """
         try:
+            # Calculate how many more jobs we can fetch
+            remaining_daily = self.max_daily_jobs - current_total
+            if remaining_daily <= 0:
+                logger.info(f"Daily limit reached - skipping {location}")
+                return []
+                
             # Use a VERY BROAD keyword to match ALL jobs
             broad_keyword = "a"  # Catches almost every job posting
+            
+            # Set maxItems to the smaller of 100 or remaining daily limit
+            items_to_fetch = min(100, remaining_daily)
             
             payload = {
                 'keyword': [broad_keyword],
                 'location': location,
                 'publishedAt': 'r86400',  # Last 24 hours
-                'maxItems': 100,  # Get up to 100 per location
+                'maxItems': items_to_fetch,  # This is the KEY change - respects daily limit
             }
             
             # Add country code for better results
@@ -71,7 +97,7 @@ class LinkedInScraper:
             elif location.lower() == 'somalia':
                 payload['country'] = 'SO'
 
-            logger.info(f"Searching for ALL jobs in {location}")
+            logger.info(f"Searching for ALL jobs in {location} (fetching up to {items_to_fetch} jobs)")
             logger.info(f"Payload: {json.dumps(payload)}")
 
             headers = {'Content-Type': 'application/json'}
@@ -164,7 +190,10 @@ class LinkedInScraper:
             return []
 
     def _filter_entry_level_only(self, jobs):
-        """Remove ONLY entry-level jobs - KEEP EVERYTHING ELSE including all industries"""
+        """
+        Remove ONLY entry-level jobs - KEEP EVERYTHING ELSE
+        This includes consultancies, freelance, contract, all industries
+        """
         entry_level_keywords = [
             'junior', 'entry', 'entry level', 'entry-level',
             'intern', 'internship', 'trainee', 'fresher',
@@ -193,7 +222,9 @@ class LinkedInScraper:
         return filtered
 
     def _get_fallback_jobs(self):
-        """Return example jobs if scraper fails (for testing)"""
+        """
+        Return example jobs if scraper fails (for testing only)
+        """
         return [
             {
                 'id': 'job_1',
