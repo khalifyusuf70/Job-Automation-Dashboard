@@ -6,47 +6,41 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 import logging
-
 from job_scraper import LinkedInScraper
 from ai_processor import JobAIProcessor
 from database import Database
 
-# Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-key-123')
 
-# Initialize components
 db = Database()
 ai_processor = JobAIProcessor()
 scraper = LinkedInScraper()
 
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Background scheduler for morning automation
 scheduler = BackgroundScheduler()
 
 def morning_job_scan():
-    """Run every morning at 8 AM"""
+    """Run once per day at 8 AM - this is the ONLY time we scrape"""
     logger.info("Starting morning job scan...")
     try:
-        # 1. Scrape jobs from last 24 hours
+        # Check if we already have jobs from today
+        existing_jobs = db.get_todays_jobs()
+        if existing_jobs:
+            logger.info(f"Already have {len(existing_jobs)} jobs from today - skipping duplicate scrape")
+            return
+            
         jobs = scraper.scrape_last_24_hours()
         logger.info(f"Found {len(jobs)} new jobs")
         
-        # 2. Process each job with AI
         for job in jobs:
-            # Check if already processed
             if db.job_exists(job['id']):
                 continue
-                
-            # Process with AI
             result = ai_processor.process_job(job)
-            
-            # Save to database
             db.save_job({
                 'job_id': job['id'],
                 'title': job['title'],
@@ -60,15 +54,14 @@ def morning_job_scan():
                 'url': job['url'],
                 'processed_at': datetime.now().isoformat()
             })
-            
         logger.info("Morning scan completed successfully")
     except Exception as e:
         logger.error(f"Morning scan failed: {e}")
 
-# Schedule the morning job
+# Schedule once per day at 8 AM
 scheduler.add_job(
     morning_job_scan,
-    trigger=CronTrigger(hour=8, minute=0),  # 8 AM daily
+    trigger=CronTrigger(hour=8, minute=0),
     id='morning_scan',
     replace_existing=True
 )
@@ -76,19 +69,16 @@ scheduler.start()
 
 @app.route('/')
 def dashboard():
-    """Display the main dashboard"""
     jobs = db.get_todays_jobs()
     return render_template('dashboard.html', jobs=jobs)
 
 @app.route('/api/jobs')
 def get_jobs():
-    """API endpoint for jobs"""
     jobs = db.get_todays_jobs()
     return jsonify(jobs)
 
 @app.route('/api/apply/<job_id>')
 def apply_job(job_id):
-    """Get application materials for a specific job"""
     job = db.get_job(job_id)
     if job:
         return jsonify({
@@ -100,9 +90,23 @@ def apply_job(job_id):
 
 @app.route('/api/refresh')
 def refresh_jobs():
-    """Manually trigger job scan"""
-    morning_job_scan()
-    return jsonify({'status': 'Scan started'})
+    """Refresh endpoint now just returns today's jobs without re-scraping"""
+    jobs = db.get_todays_jobs()
+    if not jobs:
+        # Only scrape if no jobs exist yet today
+        morning_job_scan()
+        return jsonify({'status': 'No jobs found for today - triggered fresh scan'})
+    else:
+        return jsonify({'status': f'Already have {len(jobs)} jobs from today - no new scrape needed'})
+
+# New endpoint to force a fresh scrape (use sparingly!)
+@app.route('/api/force-scrape')
+def force_scrape():
+    """Emergency endpoint to force a fresh scrape - use only when needed"""
+    if request.args.get('secret') == os.getenv('FORCE_SECRET', 'emergency'):
+        morning_job_scan()
+        return jsonify({'status': 'Force scrape triggered'})
+    return jsonify({'error': 'Unauthorized'}), 403
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
