@@ -56,7 +56,6 @@ class LinkedInScraper:
                 seen_urls.add(job['url'])
                 unique_jobs.append(job)
 
-        # Filter out any remaining entry-level jobs
         filtered = self._filter_entry_level_only(unique_jobs)
         logger.info(f"SUMMARY - Total: {len(all_jobs)}, After dedupe: {len(unique_jobs)}, After filtering: {len(filtered)}")
         return filtered
@@ -64,18 +63,17 @@ class LinkedInScraper:
     def _scrape_location_with_keywords(self, location, current_total=0):
         """
         Scrape a location using ALL senior keywords combined
-        This gets senior jobs from all industries
+        Uses proper two-step process: start run → wait → fetch results
         """
         try:
             remaining_daily = self.max_daily_jobs - current_total
             if remaining_daily <= 0:
                 return []
                 
-            # Use ALL senior keywords at once
-            items_to_fetch = min(150, remaining_daily)  # 150 per location
+            items_to_fetch = min(150, remaining_daily)
             
             payload = {
-                'keyword': self.senior_keywords,  # ALL senior keywords
+                'keyword': self.senior_keywords,
                 'location': location,
                 'publishedAt': 'r86400',
                 'maxItems': items_to_fetch,
@@ -84,7 +82,6 @@ class LinkedInScraper:
                 'enrichCompanyData': False
             }
             
-            # Add country code for better results
             if location.lower() == 'kenya':
                 payload['country'] = 'KE'
             elif location.lower() == 'somalia':
@@ -96,44 +93,76 @@ class LinkedInScraper:
 
             headers = {'Content-Type': 'application/json'}
             
-            # Use the sync endpoint
-            sync_url = f"{self.api_url}/sync?token={self.apify_token}&timeout=45"
-            
-            response = requests.post(
-                sync_url,
+            # STEP 1: Start the run (POST to /runs)
+            run_response = requests.post(
+                self.api_url,
+                params={'token': self.apify_token},
                 json=payload,
                 headers=headers,
-                timeout=50
+                timeout=30
             )
+            run_response.raise_for_status()
+            run_data = run_response.json()
+            run_id = run_data['data']['id']
+            logger.info(f"Started run {run_id} for {location}")
+
+            # STEP 2: Wait for completion with SHORT timeout
+            max_wait = 30  # Maximum 30 seconds
+            waited = 0
+            status = 'RUNNING'
+            last_status = ''
             
-            if response.status_code == 408 or response.status_code == 504:
-                logger.warning(f"Timeout for {location}")
-                return []
+            while waited < max_wait and status in ['RUNNING', 'READY']:
+                status_url = f"https://api.apify.com/v2/actor-runs/{run_id}"
+                status_response = requests.get(
+                    status_url,
+                    params={'token': self.apify_token},
+                    timeout=15
+                )
+                status_data = status_response.json()
+                status = status_data['data']['status']
                 
-            if response.status_code == 404:
-                logger.warning(f"No results for {location}")
-                return []
+                if status != last_status:
+                    logger.info(f"Run {run_id} status: {status}")
+                    last_status = status
                 
-            response.raise_for_status()
-            run_data = response.json()
-            
-            # Get the dataset items directly
-            dataset_id = run_data.get('data', {}).get('defaultDatasetId')
-            if not dataset_id:
-                logger.warning(f"No dataset for {location}")
+                if status in ['SUCCEEDED', 'FAILED', 'ABORTED']:
+                    break
+                    
+                time.sleep(3)  # Check every 3 seconds
+                waited += 3
+
+            # If still running after timeout, abort and return empty
+            if status == 'RUNNING':
+                logger.warning(f"Run {run_id} still running after {max_wait}s - aborting")
+                try:
+                    abort_url = f"https://api.apify.com/v2/actor-runs/{run_id}/abort"
+                    requests.post(abort_url, params={'token': self.apify_token}, timeout=5)
+                except:
+                    pass
                 return []
-                
-            items_url = f"https://api.apify.com/v2/datasets/{dataset_id}/items"
-            items_response = requests.get(
-                items_url,
+
+            if status != 'SUCCEEDED':
+                logger.warning(f"Run {run_id} ended with status: {status}")
+                return []
+
+            # STEP 3: Fetch the results
+            result_url = f"https://api.apify.com/v2/actor-runs/{run_id}/items"
+            result_response = requests.get(
+                result_url,
                 params={'token': self.apify_token, 'limit': items_to_fetch},
                 timeout=20
             )
-            items_response.raise_for_status()
-            items = items_response.json()
+            
+            if result_response.status_code == 404:
+                logger.warning(f"No results found for {location}")
+                return []
+                
+            result_response.raise_for_status()
+            items = result_response.json()
             
             if not items:
-                logger.warning(f"No items for {location}")
+                logger.warning(f"No items returned for {location}")
                 return []
             
             jobs = []
@@ -156,15 +185,15 @@ class LinkedInScraper:
             logger.info(f"Retrieved {len(jobs)} senior jobs from {location}")
             return jobs
             
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout scraping {location}")
+            return []
         except Exception as e:
             logger.error(f"Scraping error for {location}: {e}")
             return []
 
     def _filter_entry_level_only(self, jobs):
-        """
-        Remove ONLY entry-level jobs - KEEP EVERYTHING ELSE
-        This is an extra safety net
-        """
+        """Remove ONLY entry-level jobs - KEEP EVERYTHING ELSE"""
         entry_level_keywords = [
             'junior', 'entry', 'entry level', 'entry-level',
             'intern', 'internship', 'trainee', 'fresher',
@@ -175,16 +204,13 @@ class LinkedInScraper:
         for job in jobs:
             title_lower = job['title'].lower()
             
-            # Skip ONLY if it's explicitly entry-level
             is_entry = any(k in title_lower for k in entry_level_keywords)
             if is_entry:
-                # But keep if it has senior indicators (just in case)
                 senior_indicators = ['senior', 'lead', 'principal', 'manager', 'director', 'executive']
                 if any(ind in title_lower for ind in senior_indicators):
                     filtered.append(job)
                 continue
 
-            # KEEP EVERYTHING ELSE
             filtered.append(job)
             
         return filtered
