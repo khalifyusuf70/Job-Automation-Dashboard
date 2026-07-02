@@ -5,6 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Job Search Dashboard</title>
     <link rel="stylesheet" href="/static/style.css">
+    <style>
+        #scan-status {
+            display: none;
+            background: #fff3cd;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #ffc107;
+            color: #856404;
+            font-weight: 500;
+        }
+        #scan-status .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #ffc107;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .refresh-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -12,9 +43,15 @@
             <h1>🚀 Job Search Dashboard</h1>
             <div class="header-info">
                 <span id="last-update">Last Updated: Today</span>
-                <button onclick="refreshJobs()" class="btn btn-primary">🔄 Refresh</button>
+                <button id="refreshBtn" onclick="refreshJobs()" class="btn btn-primary refresh-btn">🔄 Refresh</button>
             </div>
         </header>
+
+        <div id="scan-status">
+            <span class="spinner"></span>
+            ⏳ Scan in progress... Please wait 2-3 minutes and refresh the page.
+            <br><small>Check logs in Railway for progress updates.</small>
+        </div>
 
         <div class="stats">
             <div class="stat-card">
@@ -32,59 +69,115 @@
         </div>
 
         <div class="jobs-list">
-            {% for job in jobs|sort(attribute='match_score', reverse=true) %}
-            <div class="job-card" data-score="{{ job.match_score }}">
-                <div class="job-header">
-                    <div class="job-title">
-                        <h2>{{ job.title }}</h2>
-                        <span class="company">{{ job.company }}</span>
-                    </div>
-                    <div class="match-badge score-{{ job.match_score|int }}">
-                        {{ job.match_score }}%
-                    </div>
-                </div>
-                <div class="job-details">
-                    <div class="assessment">
-                        <h4>📋 Recruiter Assessment</h4>
-                        <p>{{ job.assessment }}</p>
-                    </div>
-                    <div class="materials">
-                        <div class="material-section">
-                            <h4>📄 Tailored CV</h4>
-                            <pre>{{ job.tailored_cv[:200] }}...</pre>
-                            <button onclick="viewCV('{{ job.job_id }}')" class="btn btn-sm">View Full</button>
+            {% if jobs %}
+                {% for job in jobs|sort(attribute='match_score', reverse=true) %}
+                <div class="job-card" data-score="{{ job.match_score }}">
+                    <div class="job-header">
+                        <div class="job-title">
+                            <h2>{{ job.title }}</h2>
+                            <span class="company">{{ job.company }}</span>
+                            <span class="location">📍 {{ job.location }}</span>
                         </div>
-                        <div class="material-section">
-                            <h4>✉️ Cover Letter</h4>
-                            <pre>{{ job.cover_letter[:200] }}...</pre>
-                            <button onclick="viewLetter('{{ job.job_id }}')" class="btn btn-sm">View Full</button>
+                        <div class="match-badge score-{{ job.match_score|int }}">
+                            {{ job.match_score }}%
                         </div>
-                        <div class="material-section">
-                            <h4>❓ Screening Answers</h4>
-                            <div class="screening-answers">
-                                <p><strong>Why work here?</strong> {{ job.answers.why_interested }}</p>
-                                <p><strong>Salary:</strong> {{ job.answers.salary_expectation }}</p>
-                                <p><strong>Availability:</strong> {{ job.answers.availability }}</p>
+                    </div>
+                    <div class="job-details">
+                        <div class="assessment">
+                            <h4>📋 Recruiter Assessment</h4>
+                            <p>{{ job.assessment }}</p>
+                        </div>
+                        <div class="materials">
+                            <div class="material-section">
+                                <h4>📄 Tailored CV</h4>
+                                <pre>{{ job.tailored_cv[:200] }}...</pre>
+                                <button onclick="viewCV('{{ job.job_id }}')" class="btn btn-sm">View Full</button>
+                            </div>
+                            <div class="material-section">
+                                <h4>✉️ Cover Letter</h4>
+                                <pre>{{ job.cover_letter[:200] }}...</pre>
+                                <button onclick="viewLetter('{{ job.job_id }}')" class="btn btn-sm">View Full</button>
+                            </div>
+                            <div class="material-section">
+                                <h4>❓ Screening Answers</h4>
+                                <div class="screening-answers">
+                                    <p><strong>Why work here?</strong> {{ job.answers.why_interested }}</p>
+                                    <p><strong>Salary:</strong> {{ job.answers.salary_expectation }}</p>
+                                    <p><strong>Availability:</strong> {{ job.answers.availability }}</p>
+                                    <p><strong>Key Strength:</strong> {{ job.answers.key_strength }}</p>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    <div class="actions">
-                        <a href="{{ job.url }}" target="_blank" class="btn btn-primary">🔗 View Job</a>
-                        <button onclick="applyJob('{{ job.job_id }}')" class="btn btn-success">✅ Apply Now</button>
+                        <div class="actions">
+                            <a href="{{ job.url }}" target="_blank" class="btn btn-primary">🔗 View Job</a>
+                            <button onclick="applyJob('{{ job.job_id }}')" class="btn btn-success">✅ Apply Now</button>
+                        </div>
                     </div>
                 </div>
-            </div>
-            {% endfor %}
+                {% endfor %}
+            {% else %}
+                <div class="no-jobs">
+                    <h3>📭 No jobs found today</h3>
+                    <p>Click the "Refresh" button above to trigger a new job scan.</p>
+                    <p style="font-size: 0.9rem; color: #666; margin-top: 10px;">
+                        ⏰ The system automatically scans at 8:00 AM daily.
+                    </p>
+                </div>
+            {% endif %}
         </div>
     </div>
 
     <script>
+        let refreshBtn = document.getElementById('refreshBtn');
+        let scanStatus = document.getElementById('scan-status');
+
         function refreshJobs() {
+            // Disable button to prevent multiple clicks
+            refreshBtn.disabled = true;
+            refreshBtn.textContent = '⏳ Scanning...';
+            
             fetch('/api/refresh')
                 .then(response => response.json())
                 .then(data => {
-                    alert('Scan started! Check back in a few minutes.');
-                    setTimeout(() => location.reload(), 30000);
+                    // Show status message
+                    scanStatus.style.display = 'block';
+                    alert('✅ ' + data.status);
+                    
+                    // Check status every 10 seconds
+                    let checkInterval = setInterval(checkScanStatus, 10000);
+                    
+                    // Re-enable button after 30 seconds
+                    setTimeout(() => {
+                        refreshBtn.disabled = false;
+                        refreshBtn.textContent = '🔄 Refresh';
+                    }, 30000);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('❌ Error starting scan. Please try again.');
+                    refreshBtn.disabled = false;
+                    refreshBtn.textContent = '🔄 Refresh';
+                });
+        }
+
+        function checkScanStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.scan_running) {
+                        scanStatus.style.display = 'block';
+                        refreshBtn.disabled = true;
+                        refreshBtn.textContent = '⏳ Scanning...';
+                    } else {
+                        scanStatus.style.display = 'none';
+                        refreshBtn.disabled = false;
+                        refreshBtn.textContent = '🔄 Refresh';
+                        // Reload page to show new jobs
+                        location.reload();
+                    }
+                })
+                .catch(error => {
+                    console.error('Status check error:', error);
                 });
         }
 
@@ -92,7 +185,18 @@
             fetch(`/api/apply/${jobId}`)
                 .then(response => response.json())
                 .then(data => {
-                    alert(data.cv);
+                    // Open in a new window with better formatting
+                    let win = window.open('', '_blank', 'width=800,height=600');
+                    win.document.write('<html><head><title>Tailored CV</title>');
+                    win.document.write('<style>body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; } pre { white-space: pre-wrap; word-wrap: break-word; }</style>');
+                    win.document.write('</head><body>');
+                    win.document.write('<h2>📄 Tailored CV</h2>');
+                    win.document.write('<pre>' + data.cv + '</pre>');
+                    win.document.write('</body></html>');
+                    win.document.close();
+                })
+                .catch(error => {
+                    alert('Error loading CV: ' + error);
                 });
         }
 
@@ -100,25 +204,83 @@
             fetch(`/api/apply/${jobId}`)
                 .then(response => response.json())
                 .then(data => {
-                    alert(data.cover_letter);
+                    let win = window.open('', '_blank', 'width=800,height=600');
+                    win.document.write('<html><head><title>Cover Letter</title>');
+                    win.document.write('<style>body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; } pre { white-space: pre-wrap; word-wrap: break-word; }</style>');
+                    win.document.write('</head><body>');
+                    win.document.write('<h2>✉️ Tailored Cover Letter</h2>');
+                    win.document.write('<pre>' + data.cover_letter + '</pre>');
+                    win.document.write('</body></html>');
+                    win.document.close();
+                })
+                .catch(error => {
+                    alert('Error loading cover letter: ' + error);
                 });
         }
 
         function applyJob(jobId) {
-            if (confirm('Open job application page with tailored materials?')) {
+            if (confirm('📋 Review your materials before applying?\n\nClick OK to view your tailored CV, cover letter, and screening answers.')) {
                 fetch(`/api/apply/${jobId}`)
                     .then(response => response.json())
                     .then(data => {
-                        alert('Application materials ready!\n\nCV:\n' + data.cv + '\n\nCover Letter:\n' + data.cover_letter);
-                        window.open('/apply/' + jobId, '_blank');
+                        // Open comprehensive application view
+                        let win = window.open('', '_blank', 'width=900,height=700');
+                        win.document.write('<html><head><title>Application Materials</title>');
+                        win.document.write('<style>');
+                        win.document.write('body { font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; line-height: 1.6; }');
+                        win.document.write('h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }');
+                        win.document.write('h3 { color: #34495e; margin-top: 25px; }');
+                        win.document.write('.section { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 15px 0; }');
+                        win.document.write('pre { white-space: pre-wrap; word-wrap: break-word; background: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd; }');
+                        win.document.write('.answer { background: white; padding: 10px 15px; margin: 8px 0; border-radius: 5px; border-left: 3px solid #3498db; }');
+                        win.document.write('.btn-apply { background: #27ae60; color: white; padding: 12px 30px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; margin-top: 20px; }');
+                        win.document.write('.btn-apply:hover { background: #219a52; }');
+                        win.document.write('</style>');
+                        win.document.write('</head><body>');
+                        
+                        win.document.write('<h1>📋 Application Materials</h1>');
+                        
+                        win.document.write('<div class="section">');
+                        win.document.write('<h2>📄 Tailored CV</h2>');
+                        win.document.write('<pre>' + data.cv + '</pre>');
+                        win.document.write('</div>');
+                        
+                        win.document.write('<div class="section">');
+                        win.document.write('<h2>✉️ Cover Letter</h2>');
+                        win.document.write('<pre>' + data.cover_letter + '</pre>');
+                        win.document.write('</div>');
+                        
+                        win.document.write('<div class="section">');
+                        win.document.write('<h2>❓ Screening Questions</h2>');
+                        if (data.answers) {
+                            for (let key in data.answers) {
+                                let label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                                win.document.write(`<div class="answer"><strong>${label}:</strong> ${data.answers[key]}</div>`);
+                            }
+                        }
+                        win.document.write('</div>');
+                        
+                        win.document.write('<button class="btn-apply" onclick="window.close()">✅ Ready to Apply - Close this window</button>');
+                        win.document.write('</body></html>');
+                        win.document.close();
+                    })
+                    .catch(error => {
+                        alert('Error loading application materials: ' + error);
                     });
             }
         }
 
-        // Update stats
+        // Check scan status on page load
         document.addEventListener('DOMContentLoaded', function() {
+            // Update last update time
             const updateTime = new Date().toLocaleString();
             document.getElementById('last-update').textContent = 'Last Updated: ' + updateTime;
+            
+            // Check if scan is already running
+            checkScanStatus();
+            
+            // Auto-refresh status every 15 seconds if scan is running
+            setInterval(checkScanStatus, 15000);
         });
     </script>
 </body>
