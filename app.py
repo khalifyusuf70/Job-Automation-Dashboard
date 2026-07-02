@@ -6,6 +6,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 import logging
+import threading
 from job_scraper import LinkedInScraper
 from ai_processor import JobAIProcessor
 from database import Database
@@ -22,16 +23,21 @@ scraper = LinkedInScraper()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-scheduler = BackgroundScheduler()
+# Global flag to track if a scan is running
+scan_running = False
 
-def morning_job_scan():
-    """Run once per day at 8 AM - this is the ONLY time we scrape"""
-    logger.info("Starting morning job scan...")
+def run_scan_in_background():
+    """Run the job scan as a background task"""
+    global scan_running
     try:
+        scan_running = True
+        logger.info("Starting background job scan...")
+        
         # Check if we already have jobs from today
         existing_jobs = db.get_todays_jobs()
         if existing_jobs:
             logger.info(f"Already have {len(existing_jobs)} jobs from today - skipping duplicate scrape")
+            scan_running = False
             return
             
         jobs = scraper.scrape_last_24_hours()
@@ -54,11 +60,21 @@ def morning_job_scan():
                 'url': job['url'],
                 'processed_at': datetime.now().isoformat()
             })
-        logger.info("Morning scan completed successfully")
+        logger.info("Background scan completed successfully")
     except Exception as e:
-        logger.error(f"Morning scan failed: {e}")
+        logger.error(f"Background scan failed: {e}")
+    finally:
+        scan_running = False
+
+def morning_job_scan():
+    """Triggered by scheduler at 8 AM - runs in background"""
+    # Run in a separate thread to not block the scheduler
+    thread = threading.Thread(target=run_scan_in_background)
+    thread.daemon = True
+    thread.start()
 
 # Schedule once per day at 8 AM
+scheduler = BackgroundScheduler()
 scheduler.add_job(
     morning_job_scan,
     trigger=CronTrigger(hour=8, minute=0),
@@ -70,7 +86,7 @@ scheduler.start()
 @app.route('/')
 def dashboard():
     jobs = db.get_todays_jobs()
-    return render_template('dashboard.html', jobs=jobs)
+    return render_template('dashboard.html', jobs=jobs, scan_running=scan_running)
 
 @app.route('/api/jobs')
 def get_jobs():
@@ -90,23 +106,21 @@ def apply_job(job_id):
 
 @app.route('/api/refresh')
 def refresh_jobs():
-    """Refresh endpoint now just returns today's jobs without re-scraping"""
-    jobs = db.get_todays_jobs()
-    if not jobs:
-        # Only scrape if no jobs exist yet today
-        morning_job_scan()
-        return jsonify({'status': 'No jobs found for today - triggered fresh scan'})
-    else:
-        return jsonify({'status': f'Already have {len(jobs)} jobs from today - no new scrape needed'})
+    """Trigger a manual refresh - runs in background"""
+    global scan_running
+    if scan_running:
+        return jsonify({'status': 'Scan already running, please wait'})
+    
+    # Start the scan in background
+    thread = threading.Thread(target=run_scan_in_background)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'status': 'Scan started in background. Check logs for progress.'})
 
-# New endpoint to force a fresh scrape (use sparingly!)
-@app.route('/api/force-scrape')
-def force_scrape():
-    """Emergency endpoint to force a fresh scrape - use only when needed"""
-    if request.args.get('secret') == os.getenv('FORCE_SECRET', 'emergency'):
-        morning_job_scan()
-        return jsonify({'status': 'Force scrape triggered'})
-    return jsonify({'error': 'Unauthorized'}), 403
+@app.route('/api/status')
+def scan_status():
+    """Check if a scan is running"""
+    return jsonify({'scan_running': scan_running})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
