@@ -11,14 +11,10 @@ class LinkedInScraper:
     def __init__(self):
         self.apify_token = os.getenv('APIFY_TOKEN')
         self.apify_actor_id = 'number_one_scraper~cheap-advance-linkedin-jobs-scraper'
-        self.api_url = f"https://api.apify.com/v2/acts/{self.apify_actor_id}"
+        self.api_url = f"https://api.apify.com/v2/acts/{self.apify_actor_id}/runs"
         self.locations = ['Kenya']
         self.max_daily_jobs = 200
-        
-        # Use only 3 most common senior keywords
-        self.senior_keywords = [
-            'manager', 'senior', 'director'
-        ]
+        self.senior_keywords = ['manager', 'senior', 'director']
         
     def scrape_last_24_hours(self, keyword=None, location=None):
         all_jobs = []
@@ -61,14 +57,14 @@ class LinkedInScraper:
 
     def _scrape_location(self, location, current_total=0):
         """
-        Scrape a location with a SHORT timeout - returns what it can
+        Use standard two-step process: Start run → Wait → Fetch results
         """
         try:
             remaining_daily = self.max_daily_jobs - current_total
             if remaining_daily <= 0:
                 return []
                 
-            items_to_fetch = min(50, remaining_daily)  # Reduce to 50
+            items_to_fetch = min(50, remaining_daily)
             
             payload = {
                 'keyword': self.senior_keywords,
@@ -88,18 +84,18 @@ class LinkedInScraper:
 
             headers = {'Content-Type': 'application/json'}
             
-            # Use run-sync with SHORT timeout (20 seconds)
-            sync_url = f"{self.api_url}/run-sync-get-dataset-items?token={self.apify_token}&timeout=20"
+            # Use the correct synchronous run endpoint (without -get-dataset-items)
+            sync_url = f"{self.api_url}/sync?token={self.apify_token}"
             
             response = requests.post(
                 sync_url,
                 json=payload,
                 headers=headers,
-                timeout=25  # 25 second total timeout
+                timeout=30
             )
             
             if response.status_code in [408, 504, 502]:
-                logger.warning(f"Timeout for {location} - returning partial results")
+                logger.warning(f"Timeout for {location}")
                 return []
                 
             if response.status_code == 404:
@@ -107,7 +103,23 @@ class LinkedInScraper:
                 return []
                 
             response.raise_for_status()
-            items = response.json()
+            run_data = response.json()
+            
+            # Get the dataset ID from the response
+            dataset_id = run_data.get('data', {}).get('defaultDatasetId')
+            if not dataset_id:
+                logger.warning(f"No dataset ID for {location}")
+                return []
+            
+            # Fetch the items from the dataset
+            items_url = f"https://api.apify.com/v2/datasets/{dataset_id}/items"
+            items_response = requests.get(
+                items_url,
+                params={'token': self.apify_token, 'limit': items_to_fetch},
+                timeout=15
+            )
+            items_response.raise_for_status()
+            items = items_response.json()
             
             if not items:
                 logger.warning(f"No items returned for {location}")
