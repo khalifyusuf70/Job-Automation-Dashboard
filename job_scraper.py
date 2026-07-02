@@ -14,11 +14,13 @@ class LinkedInScraper:
         self.api_url = f"https://api.apify.com/v2/acts/{self.apify_actor_id}/runs"
         self.locations = ['Kenya', 'Somalia']
         self.max_daily_jobs = 300
-        # Senior-level keywords to catch ALL senior jobs (no entry-level)
-        self.senior_keywords = [
-            'Director', 'executive', 'manager', 'senior', 
-            'head of', 'lead', 'advisor', 'consultant', 
-            'coordinator', 'specialist'
+        
+        # Split keywords into SMALLER batches to avoid timeouts
+        self.keyword_batches = [
+            ['Director', 'executive', 'manager'],  # Batch 1
+            ['senior', 'head of', 'lead'],        # Batch 2
+            ['advisor', 'consultant'],            # Batch 3
+            ['coordinator', 'specialist']         # Batch 4
         ]
         
     def scrape_last_24_hours(self, keyword=None, location=None):
@@ -33,22 +35,31 @@ class LinkedInScraper:
                 logger.info(f"Reached daily limit of {self.max_daily_jobs} jobs")
                 break
                 
-            try:
-                logger.info(f"Scraping senior jobs in: {loc}")
-                jobs = self._scrape_location_with_keywords(loc, total_fetched)
-                
-                remaining = self.max_daily_jobs - total_fetched
-                if len(jobs) > remaining:
-                    jobs = jobs[:remaining]
+            # For each location, try each keyword batch
+            for batch in self.keyword_batches:
+                if total_fetched >= self.max_daily_jobs:
+                    break
                     
-                total_fetched += len(jobs)
-                all_jobs.extend(jobs)
-                logger.info(f"Found {len(jobs)} jobs in {loc} (total: {total_fetched}/{self.max_daily_jobs})")
-                time.sleep(2)
-            except Exception as e:
-                logger.error(f"Error scraping {loc}: {e}")
-                continue
+                try:
+                    # Calculate remaining capacity
+                    remaining = self.max_daily_jobs - total_fetched
+                    batch_limit = min(30, remaining)  # 30 per batch
+                    
+                    logger.info(f"Scraping {batch} in {loc} (limit: {batch_limit})")
+                    jobs = self._scrape_location_with_keywords(loc, batch, batch_limit, total_fetched)
+                    
+                    if len(jobs) > batch_limit:
+                        jobs = jobs[:batch_limit]
+                        
+                    total_fetched += len(jobs)
+                    all_jobs.extend(jobs)
+                    logger.info(f"Found {len(jobs)} jobs from {batch} in {loc} (total: {total_fetched}/{self.max_daily_jobs})")
+                    time.sleep(1)  # Small delay between batches
+                except Exception as e:
+                    logger.error(f"Error with batch {batch} in {loc}: {e}")
+                    continue
 
+        # Deduplicate
         seen_urls = set()
         unique_jobs = []
         for job in all_jobs:
@@ -57,23 +68,22 @@ class LinkedInScraper:
                 unique_jobs.append(job)
 
         filtered = self._filter_entry_level_only(unique_jobs)
-        logger.info(f"SUMMARY - Total: {len(all_jobs)}, After dedupe: {len(unique_jobs)}, After filtering: {len(filtered)}")
+        logger.info(f"SUMMARY - Total scraped: {len(all_jobs)}, After dedupe: {len(unique_jobs)}, After filtering: {len(filtered)}")
         return filtered
 
-    def _scrape_location_with_keywords(self, location, current_total=0):
+    def _scrape_location_with_keywords(self, location, keyword_batch, limit, current_total=0):
         """
-        Scrape a location using ALL senior keywords combined
-        Uses proper two-step process: start run → wait → fetch results
+        Scrape a location with a SMALL batch of keywords
         """
         try:
             remaining_daily = self.max_daily_jobs - current_total
             if remaining_daily <= 0:
                 return []
                 
-            items_to_fetch = min(150, remaining_daily)
+            items_to_fetch = min(limit, remaining_daily)
             
             payload = {
-                'keyword': self.senior_keywords,
+                'keyword': keyword_batch,  # SMALL batch (3-4 keywords)
                 'location': location,
                 'publishedAt': 'r86400',
                 'maxItems': items_to_fetch,
@@ -87,13 +97,12 @@ class LinkedInScraper:
             elif location.lower() == 'somalia':
                 payload['country'] = 'SO'
 
-            logger.info(f"Searching for senior jobs in {location} (fetching up to {items_to_fetch})")
-            logger.info(f"Keywords: {self.senior_keywords}")
+            logger.info(f"Searching in {location} with: {keyword_batch} (limit: {items_to_fetch})")
             logger.info(f"Payload: {json.dumps(payload)}")
 
             headers = {'Content-Type': 'application/json'}
             
-            # STEP 1: Start the run (POST to /runs)
+            # STEP 1: Start the run
             run_response = requests.post(
                 self.api_url,
                 params={'token': self.apify_token},
@@ -104,37 +113,32 @@ class LinkedInScraper:
             run_response.raise_for_status()
             run_data = run_response.json()
             run_id = run_data['data']['id']
-            logger.info(f"Started run {run_id} for {location}")
+            logger.info(f"Started run {run_id} for {location} with {keyword_batch}")
 
-            # STEP 2: Wait for completion with SHORT timeout
-            max_wait = 30  # Maximum 30 seconds
+            # STEP 2: Wait for completion - SHORT timeout
+            max_wait = 25  # Maximum 25 seconds
             waited = 0
             status = 'RUNNING'
-            last_status = ''
             
             while waited < max_wait and status in ['RUNNING', 'READY']:
                 status_url = f"https://api.apify.com/v2/actor-runs/{run_id}"
                 status_response = requests.get(
                     status_url,
                     params={'token': self.apify_token},
-                    timeout=15
+                    timeout=10
                 )
                 status_data = status_response.json()
                 status = status_data['data']['status']
                 
-                if status != last_status:
-                    logger.info(f"Run {run_id} status: {status}")
-                    last_status = status
-                
                 if status in ['SUCCEEDED', 'FAILED', 'ABORTED']:
                     break
                     
-                time.sleep(3)  # Check every 3 seconds
-                waited += 3
+                time.sleep(2)
+                waited += 2
 
-            # If still running after timeout, abort and return empty
+            # If still running, abort
             if status == 'RUNNING':
-                logger.warning(f"Run {run_id} still running after {max_wait}s - aborting")
+                logger.warning(f"Run {run_id} still running - aborting")
                 try:
                     abort_url = f"https://api.apify.com/v2/actor-runs/{run_id}/abort"
                     requests.post(abort_url, params={'token': self.apify_token}, timeout=5)
@@ -146,23 +150,21 @@ class LinkedInScraper:
                 logger.warning(f"Run {run_id} ended with status: {status}")
                 return []
 
-            # STEP 3: Fetch the results
+            # STEP 3: Fetch results
             result_url = f"https://api.apify.com/v2/actor-runs/{run_id}/items"
             result_response = requests.get(
                 result_url,
                 params={'token': self.apify_token, 'limit': items_to_fetch},
-                timeout=20
+                timeout=15
             )
             
             if result_response.status_code == 404:
-                logger.warning(f"No results found for {location}")
                 return []
                 
             result_response.raise_for_status()
             items = result_response.json()
             
             if not items:
-                logger.warning(f"No items returned for {location}")
                 return []
             
             jobs = []
@@ -182,18 +184,15 @@ class LinkedInScraper:
                     'work_type': item.get('workType', 'Not specified')
                 })
                 
-            logger.info(f"Retrieved {len(jobs)} senior jobs from {location}")
+            logger.info(f"Retrieved {len(jobs)} jobs from {location} with {keyword_batch}")
             return jobs
             
-        except requests.exceptions.Timeout:
-            logger.error(f"Timeout scraping {location}")
-            return []
         except Exception as e:
             logger.error(f"Scraping error for {location}: {e}")
             return []
 
     def _filter_entry_level_only(self, jobs):
-        """Remove ONLY entry-level jobs - KEEP EVERYTHING ELSE"""
+        """Remove ONLY entry-level jobs"""
         entry_level_keywords = [
             'junior', 'entry', 'entry level', 'entry-level',
             'intern', 'internship', 'trainee', 'fresher',
@@ -216,7 +215,6 @@ class LinkedInScraper:
         return filtered
 
     def _get_fallback_jobs(self):
-        """Fallback jobs for testing if scraper fails"""
         return [
             {
                 'id': 'job_1',
