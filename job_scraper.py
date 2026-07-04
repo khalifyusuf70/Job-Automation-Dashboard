@@ -132,6 +132,13 @@ class LinkedInScraper:
             filtered_jobs = self._filter_entry_level_only(jobs)
             
             logger.info(f"After filtering: {len(filtered_jobs)} jobs")
+            
+            # Log sample for debugging
+            if filtered_jobs:
+                logger.info(f"Sample job: {filtered_jobs[0].get('title')} at {filtered_jobs[0].get('company')}")
+            else:
+                logger.warning("No jobs after filtering")
+            
             return filtered_jobs
             
         except Exception as e:
@@ -172,11 +179,11 @@ class LinkedInScraper:
         """Sample jobs for testing if scraper fails"""
         return [
             {
-                'id': 'job_1',
-                'title': 'Senior Manager',
+                'id': 'fallback_1',
+                'title': 'Senior Manager - Test',
                 'company': 'Test Company',
-                'description': 'Looking for experienced Manager...',
-                'url': 'https://linkedin.com/jobs/1',
+                'description': 'This is a fallback job for testing purposes.',
+                'url': 'https://linkedin.com/jobs/test',
                 'posted_at': datetime.now().isoformat(),
                 'location': 'Nairobi, Kenya',
                 'salary': 'Competitive',
