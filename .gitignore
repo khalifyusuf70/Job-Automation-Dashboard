@@ -4,3 +4,5 @@ __pycache__/
 *.sqlite
 data/
 venv/
+*.log
+.DS_Store
