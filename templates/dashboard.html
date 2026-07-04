@@ -49,6 +49,11 @@
         .no-jobs p {
             color: #999;
         }
+        .location {
+            color: #666;
+            font-size: 0.85rem;
+            margin-left: 10px;
+        }
     </style>
 </head>
 <body>
@@ -136,6 +141,9 @@
                     <p style="font-size: 0.9rem; color: #666; margin-top: 10px;">
                         ⏰ The system automatically scans at 8:00 AM daily.
                     </p>
+                    <p style="font-size: 0.8rem; color: #999; margin-top: 15px;">
+                        💡 Tip: Check the debug endpoint at <code>/api/debug-db</code> to see if jobs are in the database.
+                    </p>
                 </div>
             {% endif %}
         </div>
@@ -145,7 +153,6 @@
         let refreshBtn = document.getElementById('refreshBtn');
         let scanStatus = document.getElementById('scan-status');
 
-        // Check if scan is running on page load
         function checkInitialStatus() {
             fetch('/api/status')
                 .then(response => response.json())
@@ -160,45 +167,33 @@
         }
 
         function refreshJobs() {
-            // Disable button to prevent multiple clicks
             refreshBtn.disabled = true;
             refreshBtn.textContent = '⏳ Starting scan...';
             
             fetch('/api/refresh')
                 .then(response => response.json())
                 .then(data => {
-                    // Show status message
+                    if (data.status === 'error') {
+                        alert('❌ ' + data.message);
+                        refreshBtn.disabled = false;
+                        refreshBtn.textContent = '🔄 Refresh';
+                        return;
+                    }
+                    
+                    // Show status
                     scanStatus.style.display = 'block';
                     refreshBtn.textContent = '⏳ Scanning...';
                     
-                    // Check status every 15 seconds WITHOUT auto-reload
-                    let checkInterval = setInterval(() => {
-                        fetch('/api/status')
-                            .then(response => response.json())
-                            .then(statusData => {
-                                if (!statusData.scan_running) {
-                                    // Scan completed - re-enable button and hide status
-                                    clearInterval(checkInterval);
-                                    refreshBtn.disabled = false;
-                                    refreshBtn.textContent = '🔄 Refresh';
-                                    scanStatus.style.display = 'none';
-                                    
-                                    // Show a message to refresh manually
-                                    alert('✅ Scan completed! Click OK to refresh the page and see new jobs.');
-                                    location.reload();
-                                }
-                            })
-                            .catch(error => console.error('Status check error:', error));
-                    }, 15000);
-                    
-                    // Safety timeout - re-enable after 3 minutes even if status doesn't update
-                    setTimeout(() => {
+                    // Show how many jobs found
+                    if (data.jobs_found > 0) {
+                        alert('✅ Found ' + data.jobs_found + ' jobs, saved ' + data.saved + ' new ones. Click OK to refresh the page.');
+                        location.reload();
+                    } else {
+                        alert('📭 No new jobs found. Click OK to refresh.');
                         refreshBtn.disabled = false;
                         refreshBtn.textContent = '🔄 Refresh';
-                        if (scanStatus.style.display === 'block') {
-                            scanStatus.style.display = 'none';
-                        }
-                    }, 180000);
+                        scanStatus.style.display = 'none';
+                    }
                 })
                 .catch(error => {
                     console.error('Error:', error);
@@ -287,7 +282,7 @@
             }
         }
 
-        // Check initial status on page load (no auto-reload!)
+        // Check initial status on page load
         document.addEventListener('DOMContentLoaded', function() {
             const updateTime = new Date().toLocaleString();
             document.getElementById('last-update').textContent = 'Last Updated: ' + updateTime;
