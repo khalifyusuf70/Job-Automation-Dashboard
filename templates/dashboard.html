@@ -35,6 +35,20 @@
             opacity: 0.6;
             cursor: not-allowed;
         }
+        .no-jobs {
+            text-align: center;
+            padding: 60px 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .no-jobs h3 {
+            color: #666;
+            margin-bottom: 15px;
+        }
+        .no-jobs p {
+            color: #999;
+        }
     </style>
 </head>
 <body>
@@ -49,7 +63,7 @@
 
         <div id="scan-status">
             <span class="spinner"></span>
-            ⏳ Scan in progress... Please wait 2-3 minutes and refresh the page.
+            ⏳ Scan in progress... Please wait 2-3 minutes.
             <br><small>Check logs in Railway for progress updates.</small>
         </div>
 
@@ -131,26 +145,60 @@
         let refreshBtn = document.getElementById('refreshBtn');
         let scanStatus = document.getElementById('scan-status');
 
+        // Check if scan is running on page load
+        function checkInitialStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.scan_running) {
+                        scanStatus.style.display = 'block';
+                        refreshBtn.disabled = true;
+                        refreshBtn.textContent = '⏳ Scanning...';
+                    }
+                })
+                .catch(error => console.error('Status check error:', error));
+        }
+
         function refreshJobs() {
             // Disable button to prevent multiple clicks
             refreshBtn.disabled = true;
-            refreshBtn.textContent = '⏳ Scanning...';
+            refreshBtn.textContent = '⏳ Starting scan...';
             
             fetch('/api/refresh')
                 .then(response => response.json())
                 .then(data => {
                     // Show status message
                     scanStatus.style.display = 'block';
-                    alert('✅ ' + data.status);
+                    refreshBtn.textContent = '⏳ Scanning...';
                     
-                    // Check status every 10 seconds
-                    let checkInterval = setInterval(checkScanStatus, 10000);
+                    // Check status every 15 seconds WITHOUT auto-reload
+                    let checkInterval = setInterval(() => {
+                        fetch('/api/status')
+                            .then(response => response.json())
+                            .then(statusData => {
+                                if (!statusData.scan_running) {
+                                    // Scan completed - re-enable button and hide status
+                                    clearInterval(checkInterval);
+                                    refreshBtn.disabled = false;
+                                    refreshBtn.textContent = '🔄 Refresh';
+                                    scanStatus.style.display = 'none';
+                                    
+                                    // Show a message to refresh manually
+                                    alert('✅ Scan completed! Click OK to refresh the page and see new jobs.');
+                                    location.reload();
+                                }
+                            })
+                            .catch(error => console.error('Status check error:', error));
+                    }, 15000);
                     
-                    // Re-enable button after 30 seconds
+                    // Safety timeout - re-enable after 3 minutes even if status doesn't update
                     setTimeout(() => {
                         refreshBtn.disabled = false;
                         refreshBtn.textContent = '🔄 Refresh';
-                    }, 30000);
+                        if (scanStatus.style.display === 'block') {
+                            scanStatus.style.display = 'none';
+                        }
+                    }, 180000);
                 })
                 .catch(error => {
                     console.error('Error:', error);
@@ -160,32 +208,10 @@
                 });
         }
 
-        function checkScanStatus() {
-            fetch('/api/status')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.scan_running) {
-                        scanStatus.style.display = 'block';
-                        refreshBtn.disabled = true;
-                        refreshBtn.textContent = '⏳ Scanning...';
-                    } else {
-                        scanStatus.style.display = 'none';
-                        refreshBtn.disabled = false;
-                        refreshBtn.textContent = '🔄 Refresh';
-                        // Reload page to show new jobs
-                        location.reload();
-                    }
-                })
-                .catch(error => {
-                    console.error('Status check error:', error);
-                });
-        }
-
         function viewCV(jobId) {
             fetch(`/api/apply/${jobId}`)
                 .then(response => response.json())
                 .then(data => {
-                    // Open in a new window with better formatting
                     let win = window.open('', '_blank', 'width=800,height=600');
                     win.document.write('<html><head><title>Tailored CV</title>');
                     win.document.write('<style>body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; } pre { white-space: pre-wrap; word-wrap: break-word; }</style>');
@@ -195,9 +221,7 @@
                     win.document.write('</body></html>');
                     win.document.close();
                 })
-                .catch(error => {
-                    alert('Error loading CV: ' + error);
-                });
+                .catch(error => alert('Error loading CV: ' + error));
         }
 
         function viewLetter(jobId) {
@@ -213,9 +237,7 @@
                     win.document.write('</body></html>');
                     win.document.close();
                 })
-                .catch(error => {
-                    alert('Error loading cover letter: ' + error);
-                });
+                .catch(error => alert('Error loading cover letter: ' + error));
         }
 
         function applyJob(jobId) {
@@ -223,7 +245,6 @@
                 fetch(`/api/apply/${jobId}`)
                     .then(response => response.json())
                     .then(data => {
-                        // Open comprehensive application view
                         let win = window.open('', '_blank', 'width=900,height=700');
                         win.document.write('<html><head><title>Application Materials</title>');
                         win.document.write('<style>');
@@ -233,8 +254,6 @@
                         win.document.write('.section { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 15px 0; }');
                         win.document.write('pre { white-space: pre-wrap; word-wrap: break-word; background: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd; }');
                         win.document.write('.answer { background: white; padding: 10px 15px; margin: 8px 0; border-radius: 5px; border-left: 3px solid #3498db; }');
-                        win.document.write('.btn-apply { background: #27ae60; color: white; padding: 12px 30px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; margin-top: 20px; }');
-                        win.document.write('.btn-apply:hover { background: #219a52; }');
                         win.document.write('</style>');
                         win.document.write('</head><body>');
                         
@@ -260,27 +279,19 @@
                         }
                         win.document.write('</div>');
                         
-                        win.document.write('<button class="btn-apply" onclick="window.close()">✅ Ready to Apply - Close this window</button>');
+                        win.document.write('<button onclick="window.close()" style="background: #27ae60; color: white; padding: 12px 30px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; margin-top: 20px;">✅ Ready to Apply - Close this window</button>');
                         win.document.write('</body></html>');
                         win.document.close();
                     })
-                    .catch(error => {
-                        alert('Error loading application materials: ' + error);
-                    });
+                    .catch(error => alert('Error loading application materials: ' + error));
             }
         }
 
-        // Check scan status on page load
+        // Check initial status on page load (no auto-reload!)
         document.addEventListener('DOMContentLoaded', function() {
-            // Update last update time
             const updateTime = new Date().toLocaleString();
             document.getElementById('last-update').textContent = 'Last Updated: ' + updateTime;
-            
-            // Check if scan is already running
-            checkScanStatus();
-            
-            // Auto-refresh status every 15 seconds if scan is running
-            setInterval(checkScanStatus, 15000);
+            checkInitialStatus();
         });
     </script>
 </body>
