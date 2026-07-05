@@ -7,6 +7,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 import logging
+import threading
 from job_scraper import LinkedInScraper
 from ai_processor import JobAIProcessor
 from database import Database
@@ -26,6 +27,87 @@ logger = logging.getLogger(__name__)
 # Global flag for scan status
 scan_running = False
 
+def process_jobs_in_background(jobs):
+    """Process jobs in the background with a timeout-safe approach"""
+    try:
+        saved_count = 0
+        total_processed = 0
+        
+        for job in jobs:
+            try:
+                total_processed += 1
+                job_id = job.get('id')
+                if not job_id:
+                    job_id = f"job_{datetime.now().timestamp()}_{abs(hash(job.get('url', '')))}"
+                
+                if db.job_exists(str(job_id)):
+                    logger.info(f"Job {job_id} already exists, skipping")
+                    continue
+                
+                logger.info(f"Processing job {total_processed}: {job.get('title')} at {job.get('company')}")
+                result = ai_processor.process_job(job)
+                
+                db.save_job({
+                    'job_id': str(job_id),
+                    'title': job.get('title', 'Unknown Position'),
+                    'company': job.get('company', 'Unknown Company'),
+                    'description': job.get('description', ''),
+                    'match_score': result['match_score'],
+                    'assessment': result['assessment'],
+                    'tailored_cv': result['tailored_cv'],
+                    'cover_letter': result['cover_letter'],
+                    'answers': json.dumps(result['answers']),
+                    'url': job.get('url', ''),
+                    'processed_at': datetime.now().isoformat()
+                })
+                saved_count += 1
+                logger.info(f"Saved job #{saved_count}: {job.get('title')}")
+                
+            except Exception as e:
+                logger.error(f"Error processing job: {e}")
+                continue
+        
+        logger.info(f"Background processing complete: {saved_count} new jobs saved out of {total_processed} processed")
+    except Exception as e:
+        logger.error(f"Background processing error: {e}")
+    finally:
+        global scan_running
+        scan_running = False
+
+@app.route('/api/refresh')
+def refresh_jobs():
+    """Manual refresh - scrapes and processes in background"""
+    global scan_running
+    if scan_running:
+        return jsonify({'status': 'error', 'message': 'Scan already running'}), 400
+    
+    try:
+        scan_running = True
+        logger.info("Starting manual refresh...")
+        jobs = scraper.scrape_last_24_hours()
+        logger.info(f"Found {len(jobs)} jobs from scraper")
+        
+        if not jobs:
+            scan_running = False
+            return jsonify({'status': 'success', 'jobs_found': 0, 'saved': 0, 'message': 'No jobs found'})
+        
+        # Start background thread to process jobs
+        thread = threading.Thread(target=process_jobs_in_background, args=(jobs,))
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            'status': 'success',
+            'jobs_found': len(jobs),
+            'message': f'Found {len(jobs)} jobs, processing in background. Check dashboard in a few minutes.'
+        })
+        
+    except Exception as e:
+        logger.error(f"Refresh error: {e}")
+        scan_running = False
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# Keep the original morning scan function for scheduler
 def morning_job_scan():
     """Run at 8 AM daily"""
     global scan_running
@@ -39,34 +121,13 @@ def morning_job_scan():
         jobs = scraper.scrape_last_24_hours()
         logger.info(f"Found {len(jobs)} jobs")
         
-        # Only process top 10 jobs to avoid timeout
-        jobs_to_process = jobs[:10]
-        saved_count = 0
+        # Process in background with thread
+        thread = threading.Thread(target=process_jobs_in_background, args=(jobs,))
+        thread.daemon = True
+        thread.start()
         
-        for job in jobs_to_process:
-            job_id = job.get('id', f"job_{datetime.now().timestamp()}")
-            if db.job_exists(job_id):
-                continue
-            result = ai_processor.process_job(job)
-            db.save_job({
-                'job_id': job_id,
-                'title': job.get('title', 'Unknown Position'),
-                'company': job.get('company', 'Unknown Company'),
-                'description': job.get('description', ''),
-                'match_score': result['match_score'],
-                'assessment': result['assessment'],
-                'tailored_cv': result['tailored_cv'],
-                'cover_letter': result['cover_letter'],
-                'answers': json.dumps(result['answers']),
-                'url': job.get('url', ''),
-                'processed_at': datetime.now().isoformat()
-            })
-            saved_count += 1
-        
-        logger.info(f"Morning scan completed - saved {saved_count} new jobs")
     except Exception as e:
         logger.error(f"Morning scan failed: {e}")
-    finally:
         scan_running = False
 
 # Setup scheduler
@@ -100,75 +161,6 @@ def apply_job(job_id):
             'answers': json.loads(job.get('answers', '{}'))
         })
     return jsonify({'error': 'Job not found'}), 404
-
-@app.route('/api/refresh')
-def refresh_jobs():
-    """Manual refresh - scrapes directly"""
-    global scan_running
-    if scan_running:
-        return jsonify({'status': 'error', 'message': 'Scan already running'}), 400
-    
-    try:
-        scan_running = True
-        logger.info("Starting manual refresh...")
-        jobs = scraper.scrape_last_24_hours()
-        logger.info(f"Found {len(jobs)} jobs from scraper")
-        
-        if not jobs:
-            scan_running = False
-            return jsonify({'status': 'success', 'jobs_found': 0, 'saved': 0, 'message': 'No jobs found'})
-        
-        # Only process top 5 jobs to avoid timeout
-        jobs_to_process = jobs[:5]
-        logger.info(f"Processing first {len(jobs_to_process)} jobs (out of {len(jobs)} total)")
-        
-        saved_count = 0
-        for job in jobs_to_process:
-            try:
-                job_id = job.get('id')
-                if not job_id:
-                    job_id = f"job_{datetime.now().timestamp()}_{abs(hash(job.get('url', '')))}"
-                
-                if db.job_exists(str(job_id)):
-                    logger.info(f"Job {job_id} already exists, skipping")
-                    continue
-                
-                logger.info(f"Processing: {job.get('title')} at {job.get('company')}")
-                result = ai_processor.process_job(job)
-                
-                db.save_job({
-                    'job_id': str(job_id),
-                    'title': job.get('title', 'Unknown Position'),
-                    'company': job.get('company', 'Unknown Company'),
-                    'description': job.get('description', ''),
-                    'match_score': result['match_score'],
-                    'assessment': result['assessment'],
-                    'tailored_cv': result['tailored_cv'],
-                    'cover_letter': result['cover_letter'],
-                    'answers': json.dumps(result['answers']),
-                    'url': job.get('url', ''),
-                    'processed_at': datetime.now().isoformat()
-                })
-                saved_count += 1
-                logger.info(f"Saved job #{saved_count}: {job.get('title')}")
-                
-            except Exception as e:
-                logger.error(f"Error processing job: {e}")
-                continue
-        
-        scan_running = False
-        logger.info(f"Manual refresh completed - saved {saved_count} new jobs")
-        return jsonify({
-            'status': 'success',
-            'jobs_found': len(jobs),
-            'saved': saved_count,
-            'message': f'Found {len(jobs)} jobs, saved {saved_count} new ones (processed {len(jobs_to_process)})'
-        })
-        
-    except Exception as e:
-        logger.error(f"Refresh error: {e}")
-        scan_running = False
-        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/status')
 def scan_status():
