@@ -39,8 +39,11 @@ def morning_job_scan():
         jobs = scraper.scrape_last_24_hours()
         logger.info(f"Found {len(jobs)} jobs")
         
+        # Only process top 10 jobs to avoid timeout
+        jobs_to_process = jobs[:10]
         saved_count = 0
-        for job in jobs:
+        
+        for job in jobs_to_process:
             job_id = job.get('id', f"job_{datetime.now().timestamp()}")
             if db.job_exists(job_id):
                 continue
@@ -115,8 +118,12 @@ def refresh_jobs():
             scan_running = False
             return jsonify({'status': 'success', 'jobs_found': 0, 'saved': 0, 'message': 'No jobs found'})
         
+        # Only process top 5 jobs to avoid timeout
+        jobs_to_process = jobs[:5]
+        logger.info(f"Processing first {len(jobs_to_process)} jobs (out of {len(jobs)} total)")
+        
         saved_count = 0
-        for job in jobs:
+        for job in jobs_to_process:
             try:
                 job_id = job.get('id')
                 if not job_id:
@@ -155,7 +162,7 @@ def refresh_jobs():
             'status': 'success',
             'jobs_found': len(jobs),
             'saved': saved_count,
-            'message': f'Found {len(jobs)} jobs, saved {saved_count} new ones'
+            'message': f'Found {len(jobs)} jobs, saved {saved_count} new ones (processed {len(jobs_to_process)})'
         })
         
     except Exception as e:
@@ -181,6 +188,22 @@ def debug_db():
         return jsonify({
             'total_jobs': count,
             'recent_jobs': [{'job_id': r[0], 'title': r[1], 'company': r[2], 'match_score': r[3], 'created_at': r[4]} for r in rows]
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/all-jobs')
+def all_jobs():
+    """Show ALL jobs in database (ignore date)"""
+    try:
+        conn = sqlite3.connect('data/jobs.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT job_id, title, company, match_score, processed_at FROM jobs ORDER BY created_at DESC LIMIT 50")
+        rows = cursor.fetchall()
+        conn.close()
+        return jsonify({
+            'total': len(rows),
+            'jobs': [{'job_id': r[0], 'title': r[1], 'company': r[2], 'match_score': r[3], 'processed_at': r[4]} for r in rows]
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
