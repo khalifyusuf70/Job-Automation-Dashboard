@@ -88,16 +88,16 @@ class Database:
             return False
 
     def get_todays_jobs(self):
-        """Get jobs from today"""
+        """Get jobs from today - with better date handling"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            today = datetime.now().date()
+            today = datetime.now().strftime('%Y-%m-%d')
             cursor.execute('''
                 SELECT * FROM jobs
                 WHERE date(processed_at) = date(?)
                 ORDER BY match_score DESC
-            ''', (today.isoformat(),))
+            ''', (today,))
             columns = [description[0] for description in cursor.description]
             jobs = []
             for row in cursor.fetchall():
@@ -109,6 +109,7 @@ class Database:
                         job['answers'] = {}
                 jobs.append(job)
             conn.close()
+            logger.info(f"Found {len(jobs)} jobs for today ({today})")
             return jobs
         except Exception as e:
             logger.error(f"Error getting today's jobs: {e}")
