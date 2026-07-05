@@ -10,9 +10,10 @@ logger = logging.getLogger(__name__)
 class LinkedInScraper:
     def __init__(self):
         self.apify_token = os.getenv('APIFY_TOKEN')
-        # Using the working scraper you tested
+        # Updated to the new scraper
         self.apify_actor_id = 'cheap_scraper~linkedin-job-scraper'
-        self.api_url = f"https://api.apify.com/v2/acts/{self.apify_actor_id}/runs"
+        # Using the sync-get-dataset-items endpoint (returns results directly)
+        self.api_url = f"https://api.apify.com/v2/actors/{self.apify_actor_id}/run-sync-get-dataset-items"
         self.max_daily_jobs = 300
         
         # Working keywords from your Apify test
@@ -29,8 +30,8 @@ class LinkedInScraper:
         
     def scrape_last_24_hours(self, keyword=None, location=None):
         """
-        Scrape jobs using cheap_scraper/linkedin-job-scraper - returns jobs directly
-        NO WEBHOOKS - everything happens in this function
+        Scrape jobs using cheap_scraper/linkedin-job-scraper
+        Uses run-sync-get-dataset-items endpoint - returns results directly
         """
         try:
             logger.info("Starting job scrape with cheap_scraper/linkedin-job-scraper")
@@ -55,54 +56,27 @@ class LinkedInScraper:
             
             headers = {'Content-Type': 'application/json'}
             
-            # Start the run (async - we'll poll for completion)
-            run_response = requests.post(
-                self.api_url,
-                params={'token': self.apify_token},
+            # Use the sync-get-dataset-items endpoint - returns results directly
+            # Add timeout parameter to prevent long hangs
+            response = requests.post(
+                f"{self.api_url}?token={self.apify_token}&timeout=60",
                 json=payload,
                 headers=headers,
-                timeout=30
+                timeout=65  # 65 second total timeout
             )
-            run_response.raise_for_status()
-            run_data = run_response.json()
-            run_id = run_data['data']['id']
-            logger.info(f"Started run {run_id}")
             
-            # Wait for completion (polling)
-            max_wait = 90  # 90 seconds max
-            waited = 0
-            status = 'RUNNING'
-            
-            while waited < max_wait and status in ['RUNNING', 'READY']:
-                status_url = f"https://api.apify.com/v2/actor-runs/{run_id}"
-                status_response = requests.get(
-                    status_url,
-                    params={'token': self.apify_token},
-                    timeout=15
-                )
-                status_data = status_response.json()
-                status = status_data['data']['status']
-                logger.info(f"Run {run_id} status: {status}")
-                
-                if status in ['SUCCEEDED', 'FAILED', 'ABORTED']:
-                    break
-                    
-                time.sleep(5)
-                waited += 5
-            
-            if status != 'SUCCEEDED':
-                logger.warning(f"Run ended with status: {status}")
+            if response.status_code == 408 or response.status_code == 504:
+                logger.warning("Scraper timed out - will retry later")
                 return self._get_fallback_jobs()
+                
+            if response.status_code == 404:
+                logger.warning("No results found")
+                return self._get_fallback_jobs()
+                
+            response.raise_for_status()
             
-            # Fetch the results
-            result_url = f"https://api.apify.com/v2/actor-runs/{run_id}/items"
-            result_response = requests.get(
-                result_url,
-                params={'token': self.apify_token, 'limit': self.max_daily_jobs},
-                timeout=20
-            )
-            result_response.raise_for_status()
-            items = result_response.json()
+            # The response is directly the dataset items
+            items = response.json()
             
             if not items:
                 logger.warning("No items returned")
@@ -141,6 +115,9 @@ class LinkedInScraper:
             
             return filtered_jobs
             
+        except requests.exceptions.Timeout:
+            logger.error("Request timeout - scraper took too long")
+            return self._get_fallback_jobs()
         except Exception as e:
             logger.error(f"Scraping error: {e}")
             return self._get_fallback_jobs()
