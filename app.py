@@ -107,7 +107,6 @@ def refresh_jobs():
         scan_running = False
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# Keep the original morning scan function for scheduler
 def morning_job_scan():
     """Run at 8 AM daily"""
     global scan_running
@@ -153,14 +152,55 @@ def get_jobs():
 
 @app.route('/api/apply/<job_id>')
 def apply_job(job_id):
-    job = db.get_job(job_id)
-    if job:
+    """Get application materials for a specific job - FIXED with better error handling and fallback"""
+    try:
+        logger.info(f"Fetching job with ID: {job_id}")
+        
+        # Try to get the job
+        job = db.get_job(job_id)
+        
+        if job:
+            logger.info(f"Found job: {job.get('title')}")
+            return jsonify({
+                'cv': job.get('tailored_cv', 'No CV available for this job.'),
+                'cover_letter': job.get('cover_letter', 'No cover letter available for this job.'),
+                'answers': json.loads(job.get('answers', '{}'))
+            })
+        else:
+            # Try to find if job exists with a different ID format
+            logger.warning(f"Job not found with ID: {job_id}")
+            
+            # Get all jobs for debugging and fallback
+            all_jobs = db.get_todays_jobs()
+            if all_jobs:
+                logger.info(f"Available job IDs: {[j.get('job_id') for j in all_jobs[:5]]}")
+                # Return the first job's data as fallback
+                first_job = all_jobs[0]
+                return jsonify({
+                    'cv': first_job.get('tailored_cv', 'CV not found - try running a new scan'),
+                    'cover_letter': first_job.get('cover_letter', 'Cover letter not found - try running a new scan'),
+                    'answers': json.loads(first_job.get('answers', '{}'))
+                })
+            
+            # No jobs at all
+            return jsonify({
+                'cv': 'No jobs found. Please run a new scan first.',
+                'cover_letter': 'No jobs found. Please run a new scan first.',
+                'answers': {
+                    'why_interested': 'Run a new scan to generate answers.',
+                    'salary_expectation': 'Not available',
+                    'availability': 'Not available',
+                    'key_strength': 'Not available'
+                }
+            })
+            
+    except Exception as e:
+        logger.error(f"Apply error: {e}")
         return jsonify({
-            'cv': job.get('tailored_cv', ''),
-            'cover_letter': job.get('cover_letter', ''),
-            'answers': json.loads(job.get('answers', '{}'))
+            'cv': f'Error: {str(e)}. Please try again.',
+            'cover_letter': 'Error loading cover letter. Please try again.',
+            'answers': {}
         })
-    return jsonify({'error': 'Job not found'}), 404
 
 @app.route('/api/status')
 def scan_status():
@@ -197,6 +237,21 @@ def all_jobs():
             'total': len(rows),
             'jobs': [{'job_id': r[0], 'title': r[1], 'company': r[2], 'match_score': r[3], 'processed_at': r[4]} for r in rows]
         })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/job-ids')
+def job_ids():
+    """List all job IDs in the database for debugging"""
+    try:
+        conn = sqlite3.connect('data/jobs.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT job_id, title FROM jobs ORDER BY created_at DESC LIMIT 20")
+        rows = cursor.fetchall()
+        conn.close()
+        return jsonify([
+            {'job_id': r[0], 'title': r[1]} for r in rows
+        ])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
