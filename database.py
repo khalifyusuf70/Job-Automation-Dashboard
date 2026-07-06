@@ -116,14 +116,17 @@ class Database:
             return []
 
     def get_job(self, job_id):
-        """Get specific job by ID"""
+        """Get specific job by ID - FIXED with better error handling and fallback"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM jobs WHERE job_id = ?', (str(job_id),))
+            
+            # Try to find by job_id first, then by id (numeric)
+            cursor.execute('SELECT * FROM jobs WHERE job_id = ? OR id = ?', (str(job_id), str(job_id)))
             columns = [description[0] for description in cursor.description]
             row = cursor.fetchone()
             conn.close()
+            
             if row:
                 job = dict(zip(columns, row))
                 if job['answers']:
@@ -131,8 +134,26 @@ class Database:
                         job['answers'] = json.loads(job['answers'])
                     except:
                         job['answers'] = {}
+                logger.info(f"Found job: {job.get('title')} with ID: {job.get('job_id')}")
                 return job
+            
+            # If not found, try without the WHERE clause to debug
+            logger.warning(f"Job not found: {job_id}")
             return None
+            
         except Exception as e:
             logger.error(f"Error getting job: {e}")
             return None
+
+    def get_all_jobs(self, limit=50):
+        """Get all jobs (for debugging)"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('SELECT job_id, title, company, match_score FROM jobs ORDER BY created_at DESC LIMIT ?', (limit,))
+            rows = cursor.fetchall()
+            conn.close()
+            return [{'job_id': r[0], 'title': r[1], 'company': r[2], 'match_score': r[3]} for r in rows]
+        except Exception as e:
+            logger.error(f"Error getting all jobs: {e}")
+            return []
