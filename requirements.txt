@@ -6,3 +6,6 @@ requests==2.31.0
 gunicorn==21.2.0
 httpx==0.24.0
 sentence-transformers==2.2.2
+huggingface-hub==0.19.4
+torch==2.0.1
+transformers==4.30.2
