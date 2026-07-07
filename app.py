@@ -165,23 +165,40 @@ def get_jobs():
 
 @app.route('/api/apply/<job_id>')
 def apply_job(job_id):
+    """Get application materials for a specific job - FIXED JSON parsing"""
     try:
         logger.info(f"Fetching job with ID: {job_id}")
         job = db.get_job(job_id)
         if job:
+            # Handle answers - it could be a dict, string, or None
+            answers = job.get('answers', {})
+            if isinstance(answers, str):
+                try:
+                    answers = json.loads(answers)
+                except:
+                    answers = {}
+            elif not isinstance(answers, dict):
+                answers = {}
+            
             return jsonify({
                 'cv': job.get('tailored_cv', 'No CV available'),
                 'cover_letter': job.get('cover_letter', 'No cover letter available'),
-                'answers': json.loads(job.get('answers', '{}'))
+                'answers': answers
             })
         else:
             all_jobs = db.get_todays_jobs()
             if all_jobs:
                 first_job = all_jobs[0]
+                answers = first_job.get('answers', {})
+                if isinstance(answers, str):
+                    try:
+                        answers = json.loads(answers)
+                    except:
+                        answers = {}
                 return jsonify({
                     'cv': first_job.get('tailored_cv', 'CV not found - run a new scan'),
                     'cover_letter': first_job.get('cover_letter', 'Cover letter not found - run a new scan'),
-                    'answers': json.loads(first_job.get('answers', '{}'))
+                    'answers': answers
                 })
             return jsonify({
                 'cv': 'No jobs found. Please run a new scan first.',
