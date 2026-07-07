@@ -11,6 +11,7 @@ import threading
 from job_scraper import LinkedInScraper
 from ai_processor import JobAIProcessor
 from database import Database
+from cv_matcher import CVMatchingAgent
 
 load_dotenv()
 
@@ -20,11 +21,11 @@ app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-key-123')
 db = Database()
 ai_processor = JobAIProcessor()
 scraper = LinkedInScraper()
+cv_matcher = CVMatchingAgent()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global flag for scan status
 scan_running = False
 
 def process_jobs_in_background(jobs):
@@ -47,12 +48,17 @@ def process_jobs_in_background(jobs):
                 logger.info(f"Processing job {total_processed}: {job.get('title')} at {job.get('company')}")
                 result = ai_processor.process_job(job)
                 
+                cv_score = job.get('cv_match_score', 0)
+                matched_template = job.get('matched_template', '')
+                
                 db.save_job({
                     'job_id': str(job_id),
                     'title': job.get('title', 'Unknown Position'),
                     'company': job.get('company', 'Unknown Company'),
                     'description': job.get('description', ''),
                     'match_score': result['match_score'],
+                    'cv_match_score': cv_score,
+                    'matched_template': matched_template,
                     'assessment': result['assessment'],
                     'tailored_cv': result['tailored_cv'],
                     'cover_letter': result['cover_letter'],
@@ -61,7 +67,7 @@ def process_jobs_in_background(jobs):
                     'processed_at': datetime.now().isoformat()
                 })
                 saved_count += 1
-                logger.info(f"Saved job #{saved_count}: {job.get('title')}")
+                logger.info(f"Saved job #{saved_count}: {job.get('title')} (CV Match: {cv_score}%)")
                 
             except Exception as e:
                 logger.error(f"Error processing job: {e}")
@@ -76,7 +82,7 @@ def process_jobs_in_background(jobs):
 
 @app.route('/api/refresh')
 def refresh_jobs():
-    """Manual refresh - scrapes and processes in background"""
+    """Manual refresh - scrapes and filters by CV match"""
     global scan_running
     if scan_running:
         return jsonify({'status': 'error', 'message': 'Scan already running'}), 400
@@ -91,15 +97,20 @@ def refresh_jobs():
             scan_running = False
             return jsonify({'status': 'success', 'jobs_found': 0, 'saved': 0, 'message': 'No jobs found'})
         
-        # Start background thread to process jobs
-        thread = threading.Thread(target=process_jobs_in_background, args=(jobs,))
+        # FILTER by JD template match - threshold 0.30 (30% similarity)
+        matched_jobs = cv_matcher.filter_jobs_by_template_match(jobs, threshold=0.30)
+        logger.info(f"Filtered to {len(matched_jobs)} matched jobs")
+        
+        thread = threading.Thread(target=process_jobs_in_background, args=(matched_jobs,))
         thread.daemon = True
         thread.start()
         
         return jsonify({
             'status': 'success',
             'jobs_found': len(jobs),
-            'message': f'Found {len(jobs)} jobs, processing in background. Check dashboard in a few minutes.'
+            'matched': len(matched_jobs),
+            'templates': cv_matcher.list_templates(),
+            'message': f'Found {len(jobs)} jobs, {len(matched_jobs)} matched your target roles - processing in background'
         })
         
     except Exception as e:
@@ -120,8 +131,10 @@ def morning_job_scan():
         jobs = scraper.scrape_last_24_hours()
         logger.info(f"Found {len(jobs)} jobs")
         
-        # Process in background with thread
-        thread = threading.Thread(target=process_jobs_in_background, args=(jobs,))
+        matched_jobs = cv_matcher.filter_jobs_by_template_match(jobs, threshold=0.30)
+        logger.info(f"Filtered to {len(matched_jobs)} matched jobs")
+        
+        thread = threading.Thread(target=process_jobs_in_background, args=(matched_jobs,))
         thread.daemon = True
         thread.start()
         
@@ -152,53 +165,34 @@ def get_jobs():
 
 @app.route('/api/apply/<job_id>')
 def apply_job(job_id):
-    """Get application materials for a specific job - FIXED with better error handling and fallback"""
     try:
         logger.info(f"Fetching job with ID: {job_id}")
-        
-        # Try to get the job
         job = db.get_job(job_id)
-        
         if job:
-            logger.info(f"Found job: {job.get('title')}")
             return jsonify({
-                'cv': job.get('tailored_cv', 'No CV available for this job.'),
-                'cover_letter': job.get('cover_letter', 'No cover letter available for this job.'),
+                'cv': job.get('tailored_cv', 'No CV available'),
+                'cover_letter': job.get('cover_letter', 'No cover letter available'),
                 'answers': json.loads(job.get('answers', '{}'))
             })
         else:
-            # Try to find if job exists with a different ID format
-            logger.warning(f"Job not found with ID: {job_id}")
-            
-            # Get all jobs for debugging and fallback
             all_jobs = db.get_todays_jobs()
             if all_jobs:
-                logger.info(f"Available job IDs: {[j.get('job_id') for j in all_jobs[:5]]}")
-                # Return the first job's data as fallback
                 first_job = all_jobs[0]
                 return jsonify({
-                    'cv': first_job.get('tailored_cv', 'CV not found - try running a new scan'),
-                    'cover_letter': first_job.get('cover_letter', 'Cover letter not found - try running a new scan'),
+                    'cv': first_job.get('tailored_cv', 'CV not found - run a new scan'),
+                    'cover_letter': first_job.get('cover_letter', 'Cover letter not found - run a new scan'),
                     'answers': json.loads(first_job.get('answers', '{}'))
                 })
-            
-            # No jobs at all
             return jsonify({
                 'cv': 'No jobs found. Please run a new scan first.',
                 'cover_letter': 'No jobs found. Please run a new scan first.',
-                'answers': {
-                    'why_interested': 'Run a new scan to generate answers.',
-                    'salary_expectation': 'Not available',
-                    'availability': 'Not available',
-                    'key_strength': 'Not available'
-                }
+                'answers': {}
             })
-            
     except Exception as e:
         logger.error(f"Apply error: {e}")
         return jsonify({
-            'cv': f'Error: {str(e)}. Please try again.',
-            'cover_letter': 'Error loading cover letter. Please try again.',
+            'cv': f'Error: {str(e)}',
+            'cover_letter': 'Please try again',
             'answers': {}
         })
 
@@ -206,52 +200,39 @@ def apply_job(job_id):
 def scan_status():
     return jsonify({'scan_running': scan_running})
 
+@app.route('/api/templates')
+def list_templates():
+    return jsonify({'templates': cv_matcher.list_templates()})
+
 @app.route('/api/debug-db')
 def debug_db():
-    """Debug endpoint to check database"""
     try:
         conn = sqlite3.connect('data/jobs.db')
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM jobs")
         count = cursor.fetchone()[0]
-        cursor.execute("SELECT job_id, title, company, match_score, created_at FROM jobs ORDER BY created_at DESC LIMIT 10")
+        cursor.execute("SELECT job_id, title, company, match_score, cv_match_score, matched_template, created_at FROM jobs ORDER BY created_at DESC LIMIT 10")
         rows = cursor.fetchall()
         conn.close()
         return jsonify({
             'total_jobs': count,
-            'recent_jobs': [{'job_id': r[0], 'title': r[1], 'company': r[2], 'match_score': r[3], 'created_at': r[4]} for r in rows]
+            'recent_jobs': [{'job_id': r[0], 'title': r[1], 'company': r[2], 'match_score': r[3], 'cv_match_score': r[4], 'matched_template': r[5], 'created_at': r[6]} for r in rows]
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/all-jobs')
 def all_jobs():
-    """Show ALL jobs in database (ignore date)"""
     try:
         conn = sqlite3.connect('data/jobs.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT job_id, title, company, match_score, processed_at FROM jobs ORDER BY created_at DESC LIMIT 50")
+        cursor.execute("SELECT job_id, title, company, match_score, cv_match_score, processed_at FROM jobs ORDER BY created_at DESC LIMIT 50")
         rows = cursor.fetchall()
         conn.close()
         return jsonify({
             'total': len(rows),
-            'jobs': [{'job_id': r[0], 'title': r[1], 'company': r[2], 'match_score': r[3], 'processed_at': r[4]} for r in rows]
+            'jobs': [{'job_id': r[0], 'title': r[1], 'company': r[2], 'match_score': r[3], 'cv_match_score': r[4], 'processed_at': r[5]} for r in rows]
         })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/job-ids')
-def job_ids():
-    """List all job IDs in the database for debugging"""
-    try:
-        conn = sqlite3.connect('data/jobs.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT job_id, title FROM jobs ORDER BY created_at DESC LIMIT 20")
-        rows = cursor.fetchall()
-        conn.close()
-        return jsonify([
-            {'job_id': r[0], 'title': r[1]} for r in rows
-        ])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
