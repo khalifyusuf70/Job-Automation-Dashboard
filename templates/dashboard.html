@@ -95,13 +95,17 @@
         .material-section pre { background: white; padding: 10px; border-radius: 4px; font-size: 0.9rem; white-space: pre-wrap; word-wrap: break-word; max-height: 100px; overflow: hidden; margin: 0 0 10px 0; }
         .screening-answers p { font-size: 0.9rem; margin-bottom: 5px; color: #555; }
         .screening-answers strong { color: #333; }
-        .actions { display: flex; gap: 10px; justify-content: flex-end; padding-top: 15px; border-top: 1px solid #e9ecef; }
+        .actions { display: flex; gap: 10px; justify-content: flex-end; padding-top: 15px; border-top: 1px solid #e9ecef; flex-wrap: wrap; }
         .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem; text-decoration: none; display: inline-block; }
         .btn-primary { background: #4a90e2; color: white; }
         .btn-primary:hover { background: #357abd; }
         .btn-success { background: #28a745; color: white; }
         .btn-success:hover { background: #218838; }
+        .btn-warning { background: #ffc107; color: #333; }
+        .btn-warning:hover { background: #e0a800; }
         .btn-sm { padding: 5px 10px; font-size: 0.8rem; }
+        .btn-edit { background: #6c757d; color: white; }
+        .btn-edit:hover { background: #5a6268; }
         .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 30px; }
         .stat-card { background: white; padding: 20px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .stat-card h3 { font-size: 0.9rem; color: #666; margin-bottom: 8px; }
@@ -110,11 +114,14 @@
         header h1 { font-size: 2rem; color: #1a1a2e; margin: 0; }
         .header-info { display: flex; gap: 15px; align-items: center; }
         .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .edited-badge { background: #ffc107; color: #333; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; margin-left: 8px; }
         @media (max-width: 768px) { 
             .materials { grid-template-columns: 1fr; } 
             .stats { grid-template-columns: 1fr; }
             header { flex-direction: column; gap: 15px; }
             .job-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+            .actions { flex-direction: column; }
+            .actions .btn { width: 100%; text-align: center; }
         }
     </style>
 </head>
@@ -152,12 +159,15 @@
         <div class="jobs-list">
             {% if jobs %}
                 {% for job in jobs|sort(attribute='match_score', reverse=true) %}
-                <div class="job-card">
+                <div class="job-card" id="job-card-{{ job.job_id }}">
                     <div class="job-header">
                         <div class="job-title">
                             <h2>{{ job.title }}</h2>
                             <span class="company">{{ job.company }}</span>
                             <span class="location">📍 {{ job.location }}</span>
+                            {% if job.cv_edited or job.cover_letter_edited %}
+                                <span class="edited-badge">✏️ Edited</span>
+                            {% endif %}
                         </div>
                         <div class="match-badge score-{{ job.match_score|int }}">
                             {{ job.match_score }}%
@@ -171,13 +181,13 @@
                         <div class="materials">
                             <div class="material-section">
                                 <h4>📄 Tailored CV</h4>
-                                <pre>{{ job.tailored_cv[:200] }}...</pre>
-                                <button onclick="viewCV('{{ job.job_id }}')" class="btn btn-sm btn-primary">View Full</button>
+                                <pre id="cv-preview-{{ job.job_id }}">{{ job.cv_edited or job.tailored_cv[:200] }}...</pre>
+                                <button onclick="openEditor('{{ job.job_id }}')" class="btn btn-sm btn-edit">✏️ Edit & Apply</button>
                             </div>
                             <div class="material-section">
                                 <h4>✉️ Cover Letter</h4>
-                                <pre>{{ job.cover_letter[:200] }}...</pre>
-                                <button onclick="viewLetter('{{ job.job_id }}')" class="btn btn-sm btn-primary">View Full</button>
+                                <pre id="cl-preview-{{ job.job_id }}">{{ job.cover_letter_edited or job.cover_letter[:200] }}...</pre>
+                                <button onclick="openEditor('{{ job.job_id }}')" class="btn btn-sm btn-edit">✏️ Edit & Apply</button>
                             </div>
                         </div>
                         <div class="screening-answers">
@@ -189,7 +199,7 @@
                         </div>
                         <div class="actions">
                             <a href="{{ job.url }}" target="_blank" class="btn btn-primary">🔗 View Job</a>
-                            <button onclick="applyJob('{{ job.job_id }}')" class="btn btn-success">✅ Apply Now</button>
+                            <button onclick="openEditor('{{ job.job_id }}')" class="btn btn-warning">✏️ Edit & Apply</button>
                         </div>
                     </div>
                 </div>
@@ -201,32 +211,47 @@
                     <p style="font-size: 0.9rem; color: #666; margin-top: 10px;">
                         ⏰ The system automatically scans at 8:00 AM daily.
                     </p>
-                    <p style="font-size: 0.8rem; color: #999; margin-top: 15px;">
-                        💡 Check the debug endpoint: <a href="/api/debug-db">/api/debug-db</a> | <a href="/api/all-jobs">/api/all-jobs</a>
-                    </p>
                 </div>
             {% endif %}
         </div>
     </div>
 
-    <script>
-        let refreshBtn = document.getElementById('refreshBtn');
-        let scanStatus = document.getElementById('scan-status');
+    <!-- Editor Modal -->
+    <div id="editorModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; overflow-y:auto; padding:40px 20px;">
+        <div style="max-width:900px; margin:0 auto; background:white; border-radius:12px; padding:30px; box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h2 id="editor-title" style="margin:0;">✏️ Edit Application Materials</h2>
+                <button onclick="closeEditor()" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
+            </div>
+            <div id="editor-content">
+                <div style="margin-bottom:15px;">
+                    <label style="font-weight:bold; display:block; margin-bottom:5px;">📄 Tailored CV</label>
+                    <textarea id="editor-cv" rows="12" style="width:100%; padding:12px; border:1px solid #ddd; border-radius:4px; font-family:monospace; font-size:14px; resize:vertical;"></textarea>
+                </div>
+                <div style="margin-bottom:15px;">
+                    <label style="font-weight:bold; display:block; margin-bottom:5px;">✉️ Cover Letter</label>
+                    <textarea id="editor-cover-letter" rows="8" style="width:100%; padding:12px; border:1px solid #ddd; border-radius:4px; font-family:monospace; font-size:14px; resize:vertical;"></textarea>
+                </div>
+                <div style="margin-bottom:20px; background:#f8f9fa; padding:15px; border-radius:4px;">
+                    <h4 style="margin:0 0 10px 0;">❓ Screening Answers</h4>
+                    <div id="editor-answers"></div>
+                </div>
+                <div style="display:flex; gap:10px; justify-content:flex-end; border-top:1px solid #ddd; padding-top:20px;">
+                    <button onclick="closeEditor()" class="btn" style="background:#6c757d; color:white;">Cancel</button>
+                    <button onclick="saveEdits()" class="btn btn-success">✅ Save Changes</button>
+                    <button onclick="applyNow()" class="btn btn-primary">🚀 Apply Now</button>
+                </div>
+                <div id="editor-status" style="margin-top:10px; font-weight:bold;"></div>
+            </div>
+        </div>
+    </div>
 
-        function checkInitialStatus() {
-            fetch('/api/status')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.scan_running) {
-                        scanStatus.style.display = 'block';
-                        refreshBtn.disabled = true;
-                        refreshBtn.textContent = '⏳ Scanning...';
-                    }
-                })
-                .catch(error => console.error('Status check error:', error));
-        }
+    <script>
+        let currentJobId = null;
+        let currentData = {};
 
         function refreshJobs() {
+            let refreshBtn = document.getElementById('refreshBtn');
             refreshBtn.disabled = true;
             refreshBtn.textContent = '⏳ Starting scan...';
             
@@ -240,11 +265,11 @@
                         return;
                     }
                     
+                    let scanStatus = document.getElementById('scan-status');
                     scanStatus.style.display = 'block';
                     refreshBtn.textContent = '⏳ Scanning...';
                     alert('✅ ' + data.message);
                     
-                    // Check status every 15 seconds
                     let checkInterval = setInterval(() => {
                         fetch('/api/status')
                             .then(response => response.json())
@@ -268,110 +293,141 @@
                 });
         }
 
-        function viewCV(jobId) {
+        function openEditor(jobId) {
+            currentJobId = jobId;
+            document.getElementById('editorModal').style.display = 'block';
+            document.getElementById('editor-status').textContent = 'Loading...';
+            
             fetch(`/api/apply/${jobId}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.json();
-                })
+                .then(response => response.json())
                 .then(data => {
-                    let win = window.open('', '_blank', 'width=800,height=600');
-                    win.document.write('<html><head><title>Tailored CV</title>');
-                    win.document.write('<style>body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; } pre { white-space: pre-wrap; word-wrap: break-word; }</style>');
-                    win.document.write('</head><body>');
-                    win.document.write('<h2>📄 Tailored CV</h2>');
-                    win.document.write('<pre>' + (data.cv || 'No CV available') + '</pre>');
-                    win.document.write('</body></html>');
-                    win.document.close();
+                    currentData = data;
+                    document.getElementById('editor-cv').value = data.cv || 'No CV available';
+                    document.getElementById('editor-cover-letter').value = data.cover_letter || 'No cover letter available';
+                    
+                    // Display screening answers
+                    let answersHtml = '';
+                    if (data.answers) {
+                        for (let key in data.answers) {
+                            let label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                            answersHtml += `<p><strong>${label}:</strong> ${data.answers[key]}</p>`;
+                        }
+                    }
+                    document.getElementById('editor-answers').innerHTML = answersHtml || '<p>No screening answers available.</p>';
+                    
+                    document.getElementById('editor-title').textContent = `✏️ Edit Application - ${data.original_cv ? 'CV & Cover Letter' : 'Application Materials'}`;
+                    document.getElementById('editor-status').textContent = '';
                 })
                 .catch(error => {
-                    alert('Error loading CV: ' + error.message + '\n\nPlease try running a new scan.');
+                    document.getElementById('editor-status').textContent = '❌ Error loading: ' + error.message;
                 });
         }
 
-        function viewLetter(jobId) {
-            fetch(`/api/apply/${jobId}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    let win = window.open('', '_blank', 'width=800,height=600');
-                    win.document.write('<html><head><title>Cover Letter</title>');
-                    win.document.write('<style>body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; } pre { white-space: pre-wrap; word-wrap: break-word; }</style>');
-                    win.document.write('</head><body>');
-                    win.document.write('<h2>✉️ Tailored Cover Letter</h2>');
-                    win.document.write('<pre>' + (data.cover_letter || 'No cover letter available') + '</pre>');
-                    win.document.write('</body></html>');
-                    win.document.close();
-                })
-                .catch(error => {
-                    alert('Error loading cover letter: ' + error.message + '\n\nPlease try running a new scan.');
-                });
+        function closeEditor() {
+            document.getElementById('editorModal').style.display = 'none';
+            currentJobId = null;
+            currentData = {};
         }
 
-        function applyJob(jobId) {
-            if (confirm('📋 Review your materials before applying?\n\nClick OK to view your tailored CV, cover letter, and screening answers.')) {
-                fetch(`/api/apply/${jobId}`)
-                    .then(response => {
-                        if (!response.ok) {
-                            throw new Error('Network response was not ok');
+        function saveEdits() {
+            let cv = document.getElementById('editor-cv').value;
+            let cover_letter = document.getElementById('editor-cover-letter').value;
+            
+            document.getElementById('editor-status').textContent = 'Saving...';
+            
+            fetch(`/api/save-edits/${currentJobId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cv, cover_letter })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    document.getElementById('editor-status').textContent = '✅ ' + data.message;
+                    // Update preview
+                    let cvPreview = document.getElementById(`cv-preview-${currentJobId}`);
+                    let clPreview = document.getElementById(`cl-preview-${currentJobId}`);
+                    if (cvPreview) cvPreview.textContent = cv.substring(0, 200) + '...';
+                    if (clPreview) clPreview.textContent = cover_letter.substring(0, 200) + '...';
+                    // Add edited badge
+                    let jobCard = document.getElementById(`job-card-${currentJobId}`);
+                    if (jobCard) {
+                        let titleDiv = jobCard.querySelector('.job-title');
+                        if (!titleDiv.querySelector('.edited-badge')) {
+                            let badge = document.createElement('span');
+                            badge.className = 'edited-badge';
+                            badge.textContent = '✏️ Edited';
+                            titleDiv.appendChild(badge);
                         }
-                        return response.json();
-                    })
-                    .then(data => {
-                        let win = window.open('', '_blank', 'width=900,height=700');
-                        win.document.write('<html><head><title>Application Materials</title>');
-                        win.document.write('<style>');
-                        win.document.write('body { font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; line-height: 1.6; }');
-                        win.document.write('h1 { color: #1a1a2e; }');
-                        win.document.write('h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }');
-                        win.document.write('h3 { color: #34495e; margin-top: 25px; }');
-                        win.document.write('.section { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 15px 0; }');
-                        win.document.write('pre { white-space: pre-wrap; word-wrap: break-word; background: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd; }');
-                        win.document.write('.answer { background: white; padding: 10px 15px; margin: 8px 0; border-radius: 5px; border-left: 3px solid #3498db; }');
-                        win.document.write('</style>');
-                        win.document.write('</head><body>');
-                        
-                        win.document.write('<h1>📋 Application Materials</h1>');
-                        
-                        win.document.write('<div class="section">');
-                        win.document.write('<h2>📄 Tailored CV</h2>');
-                        win.document.write('<pre>' + (data.cv || 'No CV available') + '</pre>');
-                        win.document.write('</div>');
-                        
-                        win.document.write('<div class="section">');
-                        win.document.write('<h2>✉️ Cover Letter</h2>');
-                        win.document.write('<pre>' + (data.cover_letter || 'No cover letter available') + '</pre>');
-                        win.document.write('</div>');
-                        
-                        win.document.write('<div class="section">');
-                        win.document.write('<h2>❓ Screening Questions</h2>');
-                        if (data.answers) {
-                            for (let key in data.answers) {
-                                let label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                                win.document.write(`<div class="answer"><strong>${label}:</strong> ${data.answers[key]}</div>`);
-                            }
-                        }
-                        win.document.write('</div>');
-                        
-                        win.document.write('<button onclick="window.close()" style="background: #27ae60; color: white; padding: 12px 30px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; margin-top: 20px;">✅ Ready to Apply - Close</button>');
-                        win.document.write('</body></html>');
-                        win.document.close();
-                    })
-                    .catch(error => {
-                        alert('Error loading application materials: ' + error.message + '\n\nPlease try running a new scan.');
-                    });
-            }
+                    }
+                    setTimeout(() => { document.getElementById('editor-status').textContent = ''; }, 3000);
+                } else {
+                    document.getElementById('editor-status').textContent = '❌ ' + data.message;
+                }
+            })
+            .catch(error => {
+                document.getElementById('editor-status').textContent = '❌ Error saving: ' + error.message;
+            });
         }
+
+        function applyNow() {
+            // First save edits
+            let cv = document.getElementById('editor-cv').value;
+            let cover_letter = document.getElementById('editor-cover-letter').value;
+            
+            document.getElementById('editor-status').textContent = 'Saving and preparing application...';
+            
+            fetch(`/api/save-edits/${currentJobId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cv, cover_letter })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // Open the job URL in a new tab
+                    let jobCard = document.getElementById(`job-card-${currentJobId}`);
+                    let jobLink = jobCard ? jobCard.querySelector('.btn-primary') : null;
+                    if (jobLink) {
+                        window.open(jobLink.href, '_blank');
+                        document.getElementById('editor-status').textContent = '✅ Application materials saved! Job opened in new tab.';
+                        setTimeout(() => { closeEditor(); }, 2000);
+                    } else {
+                        document.getElementById('editor-status').textContent = '✅ Changes saved! Please click "View Job" to apply.';
+                    }
+                } else {
+                    document.getElementById('editor-status').textContent = '❌ ' + data.message;
+                }
+            })
+            .catch(error => {
+                document.getElementById('editor-status').textContent = '❌ Error: ' + error.message;
+            });
+        }
+
+        // Close modal on Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeEditor();
+        });
+
+        // Close modal on outside click
+        document.getElementById('editorModal').addEventListener('click', function(e) {
+            if (e.target === this) closeEditor();
+        });
 
         document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('last-update').textContent = 'Last Updated: ' + new Date().toLocaleString();
-            checkInitialStatus();
+            
+            // Check initial status
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.scan_running) {
+                        document.getElementById('scan-status').style.display = 'block';
+                        document.getElementById('refreshBtn').disabled = true;
+                        document.getElementById('refreshBtn').textContent = '⏳ Scanning...';
+                    }
+                })
+                .catch(error => console.error('Status check error:', error));
         });
     </script>
 </body>
