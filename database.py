@@ -33,7 +33,9 @@ class Database:
                     answers TEXT,
                     url TEXT,
                     processed_at TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    cv_edited TEXT DEFAULT '',
+                    cover_letter_edited TEXT DEFAULT ''
                 )
             ''')
             
@@ -43,6 +45,10 @@ class Database:
                 cursor.execute("ALTER TABLE jobs ADD COLUMN cv_match_score REAL DEFAULT 0")
             if 'matched_template' not in columns:
                 cursor.execute("ALTER TABLE jobs ADD COLUMN matched_template TEXT DEFAULT ''")
+            if 'cv_edited' not in columns:
+                cursor.execute("ALTER TABLE jobs ADD COLUMN cv_edited TEXT DEFAULT ''")
+            if 'cover_letter_edited' not in columns:
+                cursor.execute("ALTER TABLE jobs ADD COLUMN cover_letter_edited TEXT DEFAULT ''")
             
             conn.commit()
             conn.close()
@@ -59,8 +65,8 @@ class Database:
                     job_id, title, company, description, match_score,
                     cv_match_score, matched_template,
                     assessment, tailored_cv, cover_letter, answers,
-                    url, processed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    url, processed_at, cv_edited, cover_letter_edited
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 str(job_data['job_id']),
                 job_data['title'],
@@ -74,7 +80,9 @@ class Database:
                 job_data['cover_letter'],
                 job_data['answers'],
                 job_data['url'],
-                job_data['processed_at']
+                job_data['processed_at'],
+                job_data.get('cv_edited', ''),
+                job_data.get('cover_letter_edited', '')
             ))
             conn.commit()
             conn.close()
