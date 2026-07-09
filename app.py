@@ -64,7 +64,9 @@ def process_jobs_in_background(jobs):
                     'cover_letter': result['cover_letter'],
                     'answers': json.dumps(result['answers']),
                     'url': job.get('url', ''),
-                    'processed_at': datetime.now().isoformat()
+                    'processed_at': datetime.now().isoformat(),
+                    'cv_edited': '',  # NEW: store edited CV
+                    'cover_letter_edited': ''  # NEW: store edited cover letter
                 })
                 saved_count += 1
                 logger.info(f"Saved job #{saved_count}: {job.get('title')} (CV Match: {cv_score}%)")
@@ -165,7 +167,7 @@ def get_jobs():
 
 @app.route('/api/apply/<job_id>')
 def apply_job(job_id):
-    """Get application materials for a specific job - FIXED JSON parsing"""
+    """Get application materials for a specific job"""
     try:
         logger.info(f"Fetching job with ID: {job_id}")
         job = db.get_job(job_id)
@@ -180,10 +182,16 @@ def apply_job(job_id):
             elif not isinstance(answers, dict):
                 answers = {}
             
+            # Get edited versions if they exist, otherwise use original
+            cv = job.get('cv_edited') or job.get('tailored_cv', 'No CV available')
+            cover_letter = job.get('cover_letter_edited') or job.get('cover_letter', 'No cover letter available')
+            
             return jsonify({
-                'cv': job.get('tailored_cv', 'No CV available'),
-                'cover_letter': job.get('cover_letter', 'No cover letter available'),
-                'answers': answers
+                'cv': cv,
+                'cover_letter': cover_letter,
+                'answers': answers,
+                'original_cv': job.get('tailored_cv', ''),
+                'original_cover_letter': job.get('cover_letter', '')
             })
         else:
             all_jobs = db.get_todays_jobs()
@@ -195,10 +203,14 @@ def apply_job(job_id):
                         answers = json.loads(answers)
                     except:
                         answers = {}
+                cv = first_job.get('cv_edited') or first_job.get('tailored_cv', 'CV not found')
+                cover_letter = first_job.get('cover_letter_edited') or first_job.get('cover_letter', 'Cover letter not found')
                 return jsonify({
-                    'cv': first_job.get('tailored_cv', 'CV not found - run a new scan'),
-                    'cover_letter': first_job.get('cover_letter', 'Cover letter not found - run a new scan'),
-                    'answers': answers
+                    'cv': cv,
+                    'cover_letter': cover_letter,
+                    'answers': answers,
+                    'original_cv': first_job.get('tailored_cv', ''),
+                    'original_cover_letter': first_job.get('cover_letter', '')
                 })
             return jsonify({
                 'cv': 'No jobs found. Please run a new scan first.',
@@ -212,6 +224,33 @@ def apply_job(job_id):
             'cover_letter': 'Please try again',
             'answers': {}
         })
+
+@app.route('/api/save-edits/<job_id>', methods=['POST'])
+def save_edits(job_id):
+    """Save edited CV and cover letter"""
+    try:
+        data = request.get_json()
+        cv_edited = data.get('cv', '')
+        cover_letter_edited = data.get('cover_letter', '')
+        
+        logger.info(f"Saving edits for job: {job_id}")
+        
+        conn = sqlite3.connect('data/jobs.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE jobs 
+            SET cv_edited = ?, cover_letter_edited = ?
+            WHERE job_id = ? OR id = ?
+        ''', (cv_edited, cover_letter_edited, str(job_id), str(job_id)))
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Edits saved for job: {job_id}")
+        return jsonify({'status': 'success', 'message': 'Changes saved successfully!'})
+        
+    except Exception as e:
+        logger.error(f"Error saving edits: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/status')
 def scan_status():
