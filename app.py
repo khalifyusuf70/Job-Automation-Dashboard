@@ -223,10 +223,11 @@ def dashboard():
         # Missing method in database - try to reinitialize
         logger.error(f"Database method missing: {e}")
         try:
-            global db
-            logger.info("Attempting to reinitialize database...")
-            db = Database()
-            jobs = db.get_all_active_jobs()
+            # Reinitialize database - no global declaration needed since db is module-level
+            new_db = Database()
+            # Update the global db variable
+            app.config['db'] = new_db
+            jobs = new_db.get_all_active_jobs()
             logger.info(f"Reinitialized database - loaded {len(jobs)} jobs")
             return render_template('dashboard.html', jobs=jobs)
         except Exception as reinit_error:
