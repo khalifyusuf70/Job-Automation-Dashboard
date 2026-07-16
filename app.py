@@ -203,25 +203,63 @@ def run_full_backfill():
 
 @app.route('/')
 def dashboard():
-    """Dashboard - shows all active jobs"""
+    """Dashboard - shows all active jobs with graceful error handling"""
     try:
-        if db:
-            jobs = db.get_all_active_jobs()
-        else:
-            jobs = []
-            logger.warning("Database not available - showing empty dashboard")
+        # Check if database is initialized
+        if db is None:
+            logger.error("Database not initialized!")
+            return """
+            <h1>⚠️ Database Error</h1>
+            <p>Database not initialized. Please check the logs.</p>
+            <p><a href="/api/debug-db">Check Database Status</a></p>
+            """, 500
+        
+        # Get all active jobs
+        jobs = db.get_all_active_jobs()
         logger.info(f"Dashboard loaded with {len(jobs)} active jobs")
         return render_template('dashboard.html', jobs=jobs)
+        
+    except AttributeError as e:
+        # Missing method in database - try to reinitialize
+        logger.error(f"Database method missing: {e}")
+        try:
+            global db
+            logger.info("Attempting to reinitialize database...")
+            db = Database()
+            jobs = db.get_all_active_jobs()
+            logger.info(f"Reinitialized database - loaded {len(jobs)} jobs")
+            return render_template('dashboard.html', jobs=jobs)
+        except Exception as reinit_error:
+            logger.error(f"Reinitialization failed: {reinit_error}")
+            return f"""
+            <h1>⚠️ Database Error</h1>
+            <p><strong>Error:</strong> {str(e)}</p>
+            <p>This usually means the database file is missing or corrupted.</p>
+            <p><a href="/api/debug-db">Check Database Status</a></p>
+            <p><small>Try running a new scan to recreate the database.</small></p>
+            """, 500
+            
+    except sqlite3.OperationalError as e:
+        # Database file issue
+        logger.error(f"Database operational error: {e}")
+        return f"""
+        <h1>⚠️ Database Error</h1>
+        <p><strong>Error:</strong> {str(e)}</p>
+        <p>The database file may be corrupted or missing.</p>
+        <p><a href="/api/debug-db">Check Database Status</a></p>
+        """, 500
+        
     except Exception as e:
+        # Any other error
         logger.error(f"Dashboard error: {e}")
         error_details = traceback.format_exc()
         logger.error(error_details)
         return f"""
-        <h1>Dashboard Error</h1>
+        <h1>⚠️ Dashboard Error</h1>
         <p><strong>Error:</strong> {str(e)}</p>
         <h3>Stack Trace:</h3>
-        <pre>{error_details}</pre>
-        <p><a href="/api/debug-db">Check Database</a></p>
+        <pre style="background:#f4f4f4;padding:15px;border-radius:5px;overflow:auto;max-height:400px;">{error_details}</pre>
+        <p><a href="/api/debug-db">Check Database</a> | <a href="/api/jobs">View Jobs API</a></p>
         """, 500
 
 @app.route('/api/refresh')
@@ -325,6 +363,7 @@ scheduler.start()
 
 @app.route('/api/jobs')
 def get_jobs():
+    """Get all active jobs as JSON"""
     if db:
         jobs = db.get_all_active_jobs()
     else:
@@ -359,6 +398,7 @@ def mark_applied(job_id):
 
 @app.route('/api/apply/<job_id>')
 def apply_job(job_id):
+    """Get application materials for a specific job"""
     try:
         logger.info(f"Fetching job with ID: {job_id}")
         if not db:
@@ -419,6 +459,7 @@ def apply_job(job_id):
 
 @app.route('/api/save-edits/<job_id>', methods=['POST'])
 def save_edits(job_id):
+    """Save edited CV and cover letter"""
     try:
         data = request.get_json()
         cv_edited = data.get('cv', '')
@@ -448,32 +489,69 @@ def save_edits(job_id):
 
 @app.route('/api/status')
 def scan_status():
+    """Check if a scan is running"""
     return jsonify({'scan_running': scan_running})
 
 @app.route('/api/templates')
 def list_templates():
+    """List all loaded JD templates"""
     if cv_matcher:
         return jsonify({'templates': cv_matcher.list_templates()})
     return jsonify({'templates': [], 'message': 'CV matcher disabled'})
 
 @app.route('/api/debug-db')
 def debug_db():
-    if not db:
-        return jsonify({'error': 'Database not available'}), 500
+    """Debug endpoint to check database status"""
     try:
-        conn = sqlite3.connect('data/jobs.db')
+        if not db:
+            return jsonify({
+                'status': 'error',
+                'message': 'Database not initialized',
+                'db_path': 'data/jobs.db'
+            }), 500
+            
+        # Check if file exists
+        db_path = 'data/jobs.db'
+        file_exists = os.path.exists(db_path)
+        file_size = os.path.getsize(db_path) if file_exists else 0
+        
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM jobs WHERE deleted = 0")
-        count = cursor.fetchone()[0]
-        cursor.execute("SELECT job_id, title, company, match_score, cv_match_score, applied, created_at FROM jobs WHERE deleted = 0 ORDER BY created_at DESC LIMIT 10")
-        rows = cursor.fetchall()
+        
+        # Check table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'")
+        table_exists = cursor.fetchone() is not None
+        
+        if table_exists:
+            cursor.execute("SELECT COUNT(*) FROM jobs WHERE deleted = 0")
+            active_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM jobs")
+            total_count = cursor.fetchone()[0]
+            cursor.execute("SELECT job_id, title, company, match_score, cv_match_score, applied, created_at FROM jobs WHERE deleted = 0 ORDER BY created_at DESC LIMIT 10")
+            rows = cursor.fetchall()
+        else:
+            active_count = 0
+            total_count = 0
+            rows = []
+            
         conn.close()
+        
         return jsonify({
-            'total_active_jobs': count,
-            'recent_jobs': [{'job_id': r[0], 'title': r[1], 'company': r[2], 'match_score': r[3], 'cv_match_score': r[4], 'applied': r[5], 'created_at': r[6]} for r in rows]
+            'status': 'success',
+            'database': {
+                'path': db_path,
+                'exists': file_exists,
+                'size_bytes': file_size,
+                'table_exists': table_exists
+            },
+            'jobs': {
+                'total': total_count,
+                'active': active_count,
+                'recent': [{'job_id': r[0], 'title': r[1], 'company': r[2], 'match_score': r[3], 'cv_match_score': r[4], 'applied': r[5], 'created_at': r[6]} for r in rows]
+            }
         })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
