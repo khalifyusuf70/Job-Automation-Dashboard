@@ -8,6 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 import logging
 import threading
+import traceback
 
 # ============ LOGGER MUST BE DEFINED FIRST ============
 logging.basicConfig(level=logging.INFO)
@@ -17,7 +18,15 @@ logger = logging.getLogger(__name__)
 from job_scraper import LinkedInScraper
 from ai_processor import JobAIProcessor
 from database import Database
-from cv_matcher import CVMatchingAgent
+
+# Try to import CV matcher - continue if it fails
+try:
+    from cv_matcher import CVMatchingAgent
+    cv_matcher = CVMatchingAgent()
+    logger.info("CV Matcher initialized successfully")
+except Exception as e:
+    logger.error(f"CV Matcher initialization failed: {e}")
+    cv_matcher = None
 
 load_dotenv()
 
@@ -45,13 +54,6 @@ try:
 except Exception as e:
     logger.error(f"LinkedIn Scraper initialization failed: {e}")
     scraper = None
-
-try:
-    cv_matcher = CVMatchingAgent()
-    logger.info("CV Matcher initialized successfully")
-except Exception as e:
-    logger.error(f"CV Matcher initialization failed: {e}")
-    cv_matcher = None
 
 # ============ GLOBAL FLAGS ============
 scan_running = False
@@ -199,6 +201,29 @@ def run_full_backfill():
 
 # ============ API ENDPOINTS ============
 
+@app.route('/')
+def dashboard():
+    """Dashboard - shows all active jobs"""
+    try:
+        if db:
+            jobs = db.get_all_active_jobs()
+        else:
+            jobs = []
+            logger.warning("Database not available - showing empty dashboard")
+        logger.info(f"Dashboard loaded with {len(jobs)} active jobs")
+        return render_template('dashboard.html', jobs=jobs)
+    except Exception as e:
+        logger.error(f"Dashboard error: {e}")
+        error_details = traceback.format_exc()
+        logger.error(error_details)
+        return f"""
+        <h1>Dashboard Error</h1>
+        <p><strong>Error:</strong> {str(e)}</p>
+        <h3>Stack Trace:</h3>
+        <pre>{error_details}</pre>
+        <p><a href="/api/debug-db">Check Database</a></p>
+        """, 500
+
 @app.route('/api/refresh')
 def refresh_jobs():
     """Manual refresh - scrapes and filters by CV match (daily)"""
@@ -297,15 +322,6 @@ scheduler.add_job(
     replace_existing=True
 )
 scheduler.start()
-
-@app.route('/')
-def dashboard():
-    if db:
-        jobs = db.get_all_active_jobs()
-    else:
-        jobs = []
-    logger.info(f"Dashboard loaded with {len(jobs)} active jobs")
-    return render_template('dashboard.html', jobs=jobs)
 
 @app.route('/api/jobs')
 def get_jobs():
