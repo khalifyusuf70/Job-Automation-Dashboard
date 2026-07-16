@@ -14,9 +14,12 @@ class Database:
         logger.info(f"Database initialized at {self.db_path}")
 
     def _init_db(self):
+        """Initialize database tables with all required columns"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+            
+            # Create table with all columns
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS jobs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,12 +38,16 @@ class Database:
                     processed_at TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     cv_edited TEXT DEFAULT '',
-                    cover_letter_edited TEXT DEFAULT ''
+                    cover_letter_edited TEXT DEFAULT '',
+                    applied BOOLEAN DEFAULT 0,
+                    deleted BOOLEAN DEFAULT 0
                 )
             ''')
             
+            # Check and add missing columns
             cursor.execute("PRAGMA table_info(jobs)")
             columns = [col[1] for col in cursor.fetchall()]
+            
             if 'cv_match_score' not in columns:
                 cursor.execute("ALTER TABLE jobs ADD COLUMN cv_match_score REAL DEFAULT 0")
             if 'matched_template' not in columns:
@@ -49,6 +56,10 @@ class Database:
                 cursor.execute("ALTER TABLE jobs ADD COLUMN cv_edited TEXT DEFAULT ''")
             if 'cover_letter_edited' not in columns:
                 cursor.execute("ALTER TABLE jobs ADD COLUMN cover_letter_edited TEXT DEFAULT ''")
+            if 'applied' not in columns:
+                cursor.execute("ALTER TABLE jobs ADD COLUMN applied BOOLEAN DEFAULT 0")
+            if 'deleted' not in columns:
+                cursor.execute("ALTER TABLE jobs ADD COLUMN deleted BOOLEAN DEFAULT 0")
             
             conn.commit()
             conn.close()
@@ -65,8 +76,8 @@ class Database:
                     job_id, title, company, description, match_score,
                     cv_match_score, matched_template,
                     assessment, tailored_cv, cover_letter, answers,
-                    url, processed_at, cv_edited, cover_letter_edited
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    url, processed_at, cv_edited, cover_letter_edited, applied, deleted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 str(job_data['job_id']),
                 job_data['title'],
@@ -82,7 +93,9 @@ class Database:
                 job_data['url'],
                 job_data['processed_at'],
                 job_data.get('cv_edited', ''),
-                job_data.get('cover_letter_edited', '')
+                job_data.get('cover_letter_edited', ''),
+                job_data.get('applied', 0),
+                job_data.get('deleted', 0)
             ))
             conn.commit()
             conn.close()
@@ -104,16 +117,16 @@ class Database:
             logger.error(f"job_exists error: {e}")
             return False
 
-    def get_todays_jobs(self):
+    def get_all_active_jobs(self):
+        """Get all jobs that are NOT deleted"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            today = datetime.now().strftime('%Y-%m-%d')
             cursor.execute('''
-                SELECT * FROM jobs
-                WHERE date(processed_at) = date(?)
-                ORDER BY cv_match_score DESC, match_score DESC
-            ''', (today,))
+                SELECT * FROM jobs 
+                WHERE deleted = 0
+                ORDER BY cv_match_score DESC, match_score DESC, created_at DESC
+            ''')
             columns = [description[0] for description in cursor.description]
             jobs = []
             for row in cursor.fetchall():
@@ -125,17 +138,45 @@ class Database:
                         job['answers'] = {}
                 jobs.append(job)
             conn.close()
-            logger.info(f"Found {len(jobs)} jobs for today ({today})")
+            logger.info(f"Found {len(jobs)} active jobs")
             return jobs
         except Exception as e:
-            logger.error(f"Error getting today's jobs: {e}")
+            logger.error(f"Error getting active jobs: {e}")
             return []
+
+    def delete_job(self, job_id):
+        """Soft delete a job (mark as deleted)"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('UPDATE jobs SET deleted = 1 WHERE job_id = ? OR id = ?', (str(job_id), str(job_id)))
+            conn.commit()
+            conn.close()
+            logger.info(f"Deleted job: {job_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting job: {e}")
+            return False
+
+    def mark_applied(self, job_id):
+        """Mark a job as applied"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('UPDATE jobs SET applied = 1 WHERE job_id = ? OR id = ?', (str(job_id), str(job_id)))
+            conn.commit()
+            conn.close()
+            logger.info(f"Marked applied for job: {job_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error marking applied: {e}")
+            return False
 
     def get_job(self, job_id):
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM jobs WHERE job_id = ? OR id = ?', (str(job_id), str(job_id)))
+            cursor.execute('SELECT * FROM jobs WHERE (job_id = ? OR id = ?) AND deleted = 0', (str(job_id), str(job_id)))
             columns = [description[0] for description in cursor.description]
             row = cursor.fetchone()
             conn.close()
@@ -151,3 +192,7 @@ class Database:
         except Exception as e:
             logger.error(f"Error getting job: {e}")
             return None
+
+    def get_todays_jobs(self):
+        """Legacy method - kept for compatibility"""
+        return self.get_all_active_jobs()
