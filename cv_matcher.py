@@ -1,22 +1,37 @@
 import os
 import json
 import logging
-from sentence_transformers import SentenceTransformer, util
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 class CVMatchingAgent:
     def __init__(self):
-        # Load a lightweight model - free and runs locally
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')
-        self.templates = []
-        self.template_embeddings = []
-        self._load_templates_from_descriptions()
+        # Use a TINY model that uses ~50MB instead of 500MB
+        # This model is fast, small, and still effective for semantic matching
+        try:
+            from sentence_transformers import SentenceTransformer, util
+            self.model = SentenceTransformer('all-MiniLM-L3-v2')  # Much smaller!
+            self._load_templates()
+            logger.info("CVMatchingAgent initialized with tiny model")
+        except ImportError as e:
+            logger.error(f"Failed to import sentence_transformers: {e}")
+            self.model = None
+            self.templates = []
+            self.template_embeddings = []
+            logger.warning("CV matching disabled - running without filtering")
+        except Exception as e:
+            logger.error(f"Failed to initialize model: {e}")
+            self.model = None
+            self.templates = []
+            self.template_embeddings = []
+            logger.warning("CV matching disabled - running without filtering")
         
-    def _load_templates_from_descriptions(self):
+    def _load_templates(self):
         """Load your 6 target job descriptions as templates"""
-        
+        if self.model is None:
+            return
+            
         # Your 6 target job descriptions
         templates_data = [
             {
@@ -94,6 +109,8 @@ Key Competencies: Analytical thinking, evidence-based decision making, leadershi
         ]
         
         # Load templates into memory
+        self.templates = []
+        self.template_embeddings = []
         for template_data in templates_data:
             self.templates.append({
                 'filename': template_data['filename'],
@@ -111,8 +128,8 @@ Key Competencies: Analytical thinking, evidence-based decision making, leadershi
         Match a job description against all 6 loaded templates
         Returns True if job matches at least one template above threshold
         """
-        if not self.template_embeddings:
-            return True, 0.0, None
+        if self.model is None or not self.template_embeddings:
+            return True, 0.0, None, ""
             
         try:
             # Encode the job description once
@@ -124,6 +141,7 @@ Key Competencies: Analytical thinking, evidence-based decision making, leadershi
             best_index = -1
             
             for i, template_embedding in enumerate(self.template_embeddings):
+                from sentence_transformers import util
                 similarity = util.pytorch_cos_sim(job_embedding, template_embedding).item()
                 
                 if similarity > best_score:
@@ -144,23 +162,28 @@ Key Competencies: Analytical thinking, evidence-based decision making, leadershi
         """
         Filter jobs, keeping only those that match at least one of your 6 JD templates
         """
-        if not self.template_embeddings:
-            logger.info("No templates loaded - processing all jobs")
+        if self.model is None or not self.template_embeddings:
+            logger.info("CV matching disabled - processing all jobs")
             return jobs
             
         matched_jobs = []
-        for job in jobs:
+        total = len(jobs)
+        for idx, job in enumerate(jobs):
             job_text = f"{job.get('title', '')} {job.get('description', '')}"
             is_match, score, template, template_content = self.match_job_against_templates(job_text, threshold)
             
             if is_match:
                 job['cv_match_score'] = round(score * 100, 2)
                 job['matched_template'] = template
-                job['template_content'] = template_content  # For CV tailoring
+                job['template_content'] = template_content
                 matched_jobs.append(job)
                 logger.info(f"✅ Matched: {job.get('title')} (score: {job['cv_match_score']}%, template: {template})")
             else:
                 logger.info(f"❌ Rejected: {job.get('title')} (score: {round(score * 100, 2)}%)")
+            
+            # Log progress every 10 jobs
+            if (idx + 1) % 10 == 0:
+                logger.info(f"Processed {idx + 1}/{total} jobs")
                 
         logger.info(f"Filtered: {len(matched_jobs)} jobs matched out of {len(jobs)}")
         return matched_jobs
